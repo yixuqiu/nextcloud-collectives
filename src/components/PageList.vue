@@ -73,54 +73,71 @@
 				:filtered-view="false"
 				class="page-list-root-page"
 				@click.native="show('details')" />
-			<Draggable v-if="subpages || keptSortable(currentPage.id)"
+			<div v-if="!sortedBy('byOrder')" class="sort-order-container">
+				<span class="sort-order-chip">
+					{{ sortedBy('byTitle') ? t('collectives', 'Sorted by title') : t('collectives', 'Sorted by recently changed') }}
+					<NcButton :aria-label="t('collectives', 'Switch back to default sort order')"
+						type="tertiary"
+						class="sort-oder-chip-button"
+						@click="sortPagesAndScroll('byOrder')">
+						<template #icon>
+							<CloseIcon :size="20" />
+						</template>
+					</NcButton>
+				</span>
+			</div>
+			<SubpageList v-if="templateView"
+				:key="templateView.id"
+				:page="templateView"
+				:level="1"
+				:filtered-view="isFilteredview"
+				:is-template="true" />
+			<div v-if="isFilteredview">
+				<NcAppNavigationCaption v-if="filteredPages.length > 0" :name="t('Collectives','Results in title')" />
+				<RecycleScroller v-if="filteredPages.length > 0"
+					v-slot="{ item }"
+					class="scroller"
+					:class="{ fullscroller: !loadingContentFilteredPages && contentFilteredPages.length <= 0 }"
+					:items="filteredPages"
+					:item-size="44"
+					key-field="id">
+					<SubpageList :key="item.id"
+						:data-page-id="item.id"
+						:page="item"
+						:level="1"
+						:filtered-view="true"
+						class="page-list-drag-item" />
+				</RecycleScroller>
+				<NcAppNavigationCaption v-if="loadingContentFilteredPages || contentFilteredPages.length > 0" :name="t('Collectives', 'Results in content')" />
+				<RecycleScroller v-if="!loadingContentFilteredPages && contentFilteredPages.length > 0"
+					v-slot="{ item }"
+					class="scroller contentFiltered"
+					:class="{ fullscroller: filteredPages.length <= 0 }"
+					:items="contentFilteredPages"
+					:item-size="44"
+					key-field="id">
+					<SubpageList :key="item.id"
+						:data-page-id="item.id"
+						:page="item"
+						:level="1"
+						:filtered-view="true"
+						class="page-list-drag-item" />
+				</RecycleScroller>
+				<div v-if="loadingContentFilteredPages" class="scrollload">
+					<SkeletonLoading type="items" :count="3" />
+				</div>
+			</div>
+			<Draggable v-else
 				:list="subpages"
 				:parent-id="rootPage.id"
 				:disable-sorting="isFilteredview">
-				<template #header>
-					<div v-if="!sortedBy('byOrder')" class="sort-order-container">
-						<span class="sort-order-chip">
-							{{ sortedBy('byTitle') ? t('collectives', 'Sorted by title') : t('collectives', 'Sorted by recently changed') }}
-							<NcButton :aria-label="t('collectives', 'Switch back to default sort order')"
-								type="tertiary"
-								class="sort-oder-chip-button"
-								@click="sortPagesAndScroll('byOrder')">
-								<template #icon>
-									<CloseIcon :size="20" />
-								</template>
-							</NcButton>
-						</span>
-					</div>
-				</template>
-				<SubpageList v-if="templateView"
-					:key="templateView.id"
-					:page="templateView"
+				<SubpageList v-for="page in subpages"
+					:key="page.id"
+					:data-page-id="page.id"
+					:page="page"
 					:level="1"
-					:filtered-view="isFilteredview"
-					:is-template="true" />
-				<div v-if="isFilteredview">
-					<RecycleScroller v-slot="{item}"
-						class="scroller"
-						:items="filteredPages"
-						:item-size="44"
-						key-field="id">
-						<SubpageList :key="item.id"
-							:data-page-id="item.id"
-							:page="item"
-							:level="1"
-							:filtered-view="true"
-							class="page-list-drag-item" />
-					</RecycleScroller>
-				</div>
-				<div v-if="!isFilteredview">
-					<SubpageList v-for="page in subpages"
-						:key="page.id"
-						:data-page-id="page.id"
-						:page="page"
-						:level="1"
-						:filtered-view="false"
-						class="page-list-drag-item" />
-				</div>
+					:filtered-view="false"
+					class="page-list-drag-item" />
 			</Draggable>
 		</div>
 		<PageTrash v-if="displayTrash" />
@@ -130,7 +147,7 @@
 <script>
 
 import { mapActions, mapGetters, mapMutations } from 'vuex'
-import { NcActionButton, NcActions, NcAppContentList, NcButton, NcTextField } from '@nextcloud/vue'
+import { NcAppNavigationCaption, NcActionButton, NcActions, NcAppContentList, NcButton, NcTextField } from '@nextcloud/vue'
 import { showError } from '@nextcloud/dialogs'
 import CloseIcon from 'vue-material-design-icons/Close.vue'
 import Draggable from './PageList/Draggable.vue'
@@ -148,6 +165,8 @@ import SkeletonLoading from './SkeletonLoading.vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+import debounce from 'debounce'
+import { contentSearchPages } from '../apis/collectives/pages.js'
 
 export default {
 	name: 'PageList',
@@ -169,11 +188,15 @@ export default {
 		SortAscendingIcon,
 		SortClockAscendingOutlineIcon,
 		RecycleScroller,
+		NcAppNavigationCaption,
 	},
 
 	data() {
 		return {
 			filterString: '',
+			contentFilteredPages: [],
+			loadingContentFilteredPages: false,
+			getContentFilteredPagesDebounced: debounce(this.getContentFilteredPages, 700),
 		}
 	},
 
@@ -248,6 +271,16 @@ export default {
 		},
 	},
 
+	watch: {
+		'currentCollective.id'() {
+			this.contentFilteredPages = []
+			this.getContentFilteredPagesDebounced()
+		},
+		filterString() {
+			this.getContentFilteredPagesDebounced()
+		},
+	},
+
 	methods: {
 		...mapMutations([
 			'setPageOrder',
@@ -277,6 +310,21 @@ export default {
 				scrollToPage(this.currentPage.id)
 			})
 		},
+		async getContentFilteredPages() {
+			if (!this.filterString) {
+				this.contentFilteredPages = []
+				return
+			}
+
+			this.loadingContentFilteredPages = true
+			const oldFilterString = this.filterString
+			this.contentFilteredPages = (await contentSearchPages(this.currentCollective.id, this.filterString)).data.data
+
+			// prevent showing old results
+			if (oldFilterString === this.filterString) {
+				this.loadingContentFilteredPages = false
+			}
+		},
 	},
 }
 
@@ -285,8 +333,13 @@ export default {
 <style lang="scss" scoped>
 
 .scroller {
-	// NC header bar 50px; page list header bar 52px; landing page 48px; page trash 76px
-	height: calc(100vh - 50px - 52px - 48px - 76px);
+	// NC header bar 50px; page list header bar 52px; landing page 48px; page trash 76px; NcAppNavigationCaption 78px divided by 2 for multiple scrollers
+	max-height: calc((100vh - var(--header-height) - 52px - 48px - 76px - 78px * 2) / 2);
+}
+
+.fullscroller{
+	// NC header bar 50px; page list header bar 52px; landing page 48px; page trash 76px; NcAppNavigationCaption 78px
+	max-height: calc(100vh - var(--header-height) - 52px - 48px - 76px - 78px);
 }
 
 .app-content-list {
@@ -346,7 +399,7 @@ li.toggle-button.selected {
 	align-items: center;
 
 	position: sticky;
-	top: 92px; // 2x 44px + 4px border-bottom
+	top: 100px; // 52px pagelist header + 44px landing page + 4px border-bottom
 	z-index: 1;
 	background-color: var(--color-main-background);
 	border-bottom: 4px solid var(--color-main-background);

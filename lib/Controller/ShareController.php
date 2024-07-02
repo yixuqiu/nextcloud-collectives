@@ -53,15 +53,15 @@ class ShareController extends Controller {
 	/**
 	 * @NoAdminRequired
 	 */
-	public function createCollectiveShare(int $collectiveId): DataResponse {
-		return $this->createPageShare($collectiveId, 0);
+	public function createCollectiveShare(int $collectiveId, string $password = ''): DataResponse {
+		return $this->createPageShare($collectiveId, 0, $password);
 	}
 
 	/**
 	 * @NoAdminRequired
 	 */
-	public function updateCollectiveShare(int $collectiveId, string $token, bool $editable): DataResponse {
-		return $this->updatePageShare($collectiveId, 0, $token, $editable);
+	public function updateCollectiveShare(int $collectiveId, string $token, bool $editable, string $password = ''): DataResponse {
+		return $this->updatePageShare($collectiveId, 0, $token, $editable, $password);
 	}
 
 	/**
@@ -74,15 +74,15 @@ class ShareController extends Controller {
 	/**
 	 * @NoAdminRequired
 	 */
-	public function createPageShare(int $collectiveId, int $pageId = 0): DataResponse {
-		return $this->prepareResponse(function () use ($collectiveId, $pageId): array {
+	public function createPageShare(int $collectiveId, int $pageId = 0, string $password = ''): DataResponse {
+		return $this->prepareResponse(function () use ($collectiveId, $pageId, $password): array {
 			$userId = $this->getUserId();
 			$collective = $this->collectiveService->getCollective($collectiveId, $userId);
 			$pageInfo = null;
 			if ($pageId !== 0) {
 				$pageInfo = $this->pageService->pageToSubFolder($collectiveId, $pageId, $userId);
 			}
-			$share = $this->shareService->createShare($userId, $collective, $pageInfo);
+			$share = $this->shareService->createShare($userId, $collective, $pageInfo, $password);
 			return [
 				"data" => $share
 			];
@@ -92,15 +92,15 @@ class ShareController extends Controller {
 	/**
 	 * @NoAdminRequired
 	 */
-	public function updatePageShare(int $collectiveId, int $pageId, string $token, bool $editable = false): DataResponse {
-		return $this->prepareResponse(function () use ($collectiveId, $pageId, $token, $editable): array {
+	public function updatePageShare(int $collectiveId, int $pageId, string $token, bool $editable, string $password = ''): DataResponse {
+		return $this->prepareResponse(function () use ($collectiveId, $pageId, $token, $editable, $password): array {
 			$userId = $this->getUserId();
 			$collective = $this->collectiveService->getCollective($collectiveId, $userId);
 			$pageInfo = null;
 			if ($pageId !== 0) {
 				$pageInfo = $this->pageService->findByFileId($collectiveId, $pageId, $userId);
 			}
-			$share = $this->shareService->updateShare($userId, $collective, $pageInfo, $token, $editable);
+			$share = $this->shareService->updateShare($userId, $collective, $pageInfo, $token, $editable, $password);
 			return [
 				"data" => $share
 			];

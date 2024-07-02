@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Холбоос хуваалцах",
     "Settings" : "Тохиргоо",
     "Members" : "Гишүүд",
     "Loading…" : "уншиж байна",
@@ -14,8 +15,9 @@ OC.L10N.register(
     "Move or copy" : "Зөөх эсвэл хуулах",
     "Title" : "Цол/Албан тушаал",
     "Deleted" : "Устгагдсан",
+    "Password" : "нууц үг",
+    "Advanced settings" : "Нарийвчилсан тохиргоо",
     "Unshare" : "Түгээлтийг зогсоох",
-    "Share link" : "Холбоос хуваалцах",
     "View only" : "Зөвхөн үзэх",
     "Download" : "Татах",
     "Attachments" : "Хавсралт",

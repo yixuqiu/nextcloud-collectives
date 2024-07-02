@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Deel skakel",
     "Settings" : "Instellings",
     "Loading…" : "Laai…",
     "View" : "Bekyk",
@@ -14,8 +15,8 @@ OC.L10N.register(
     "Move or copy" : "Kopieer of skuif",
     "Title" : "Titel",
     "Deleted" : "Geskrap",
+    "Advanced settings" : "Gevorderde instellings",
     "Unshare" : "Ontdeel",
-    "Share link" : "Deel skakel",
     "Can edit" : "Kan redigeer",
     "Download" : "Laai af",
     "Versions" : "Weergawes",

@@ -15,10 +15,16 @@ OC.L10N.register(
     "You are not allowed to edit %s" : "غير مسموح لك بتعديل %s",
     "Share not found for user" : "لم يمُكن العثور على مُشاركة للمستخدِم",
     "Landing page" : "الصفحة المقصودة",
+    "Teams App Enabled" : "تمّ تمكين تطبيق الفِرَق ",
+    "Teams app is enabled" : "تطبيق الفِرَق مُمكَّن",
+    "The teams app is not enabled, but is required for Collectives to work." : "تطبيق الفِرَق Teams غير مُمكَّن؛ و هو مطلوب لتشغيل تطبيق التجميعات Collectives",
+    "PDO SQLite driver" : "سوّاقة PDO SQLite driver",
+    "PDO SQLite driver is enabled, full text search of page content is available." : "سوّاقة PDO SQLite driver مُمكَّنة، و البحث النصي الشامل في محتوى الصفحة مُتاحٌ",
+    "Collectives app is enabled, but PDO SQLite driver is missing. Please install it to enable full text search of the page content." : "تطبيق التجميعات Collectives مُمكَّن؛ لكن سوّاقة PDO SQLite driver ناقصة. رجاءً، قُم بتثبيتها لتمكين البحث النصي الشامل في محتويات الصفحات.",
     "A place for activist and community projects to build shared knowledge" : "مكان للنشطاء والمشاريع المجتمعية لبناء المعرفة المشتركة",
-    "Collectives is a Nextcloud App for activist and community projects to organize together.\nCome and gather in collectives to build shared knowledge.\n\n* 👥 **Collective and non-hierarchical workflow by heart**: Collectives are\n  tied to a [Nextcloud Team](https://github.com/nextcloud/circles) and\n  owned by the collective.\n* 📝 **Collaborative page editing** like known from Etherpad thanks to the\n  [Text app](https://github.com/nextcloud/text).\n* 🔤 **Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax**\n  for page formatting.\n\n## Installation\n\nIn your Nextcloud instance, simply navigate to **»Apps«**, find the\n**»Teams«** and **»Collectives«** apps and enable them." : "تطبيق التجميعات Collectives هو تطبيق لنكست كلاود لتنظيم عم.مل الفرق و المجموعات لبناء المعرفة المشتركة.\n\n * 👥 **سير العمل الجماعي غير الهرمي.**: كل تجميعة مرتبطة بـفريق من مستخدِمي نكست كلاود [Nextcloud Team] (https://github.com/nextcloud/circles) . \n* 📝 **تحرير الصفحة تعاونيّاً ** بالكيفية المعروفة في إيثرباد Etherpad؛ و ذلك أصبح ممكنا بفضل التطبيق [Text app] (https://github.com/nextcloud/text). \n* 🔤 **صيغة قياسية متعارف عليها لتحرير التجميعة؛ و هي صيغة ماركداون الشهيرة [Markdown] (https://en.wikipedia.org/wiki/Markdown)**. \n\n## التثبيت \nعلى خادوم نكست كلاود عندك، ما عليك سوى الانتقال إلى جزء **«التطبيقات Apps»**، ثم  البحث عن تطبيقات **«الفرق Teams»** و **«التجميعات Collectives»** و تمكينها.",
+    "Collectives is a Nextcloud App for activist and community projects to organize together.\nCome and gather in collectives to build shared knowledge.\n\n* 👥 **Collective and non-hierarchical workflow by heart**: Collectives are\n  tied to a [Nextcloud Team](https://github.com/nextcloud/circles) and\n  owned by the collective.\n* 📝 **Collaborative page editing** like known from Etherpad thanks to the\n  [Text app](https://github.com/nextcloud/text).\n* 🔤 **Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax**\n  for page formatting.\n\n## Installation\n\nIn your Nextcloud instance, simply navigate to **»Apps«**, find the\n**»Teams«** and **»Collectives«** apps and enable them." : "تطبيق التجميعات Collectives هو تطبيق لنكست كلاود لتنظيم عممل الفرق و المجموعات لبناء المعرفة المشتركة.\n\n * 👥 **مسارات الدفق الجماعي غير الهرمي.**: كل تجميعة مرتبطة بـفريق من مستخدِمي نكست كلاود [Nextcloud Team] (https://github.com/nextcloud/circles) . \n* 📝 **تحرير الصفحة تعاونيّاً ** بالكيفية المعروفة في إيثرباد Etherpad؛ و ذلك أصبح ممكنا بفضل التطبيق [Text app] (https://github.com/nextcloud/text). \n* 🔤 **صيغة قياسية متعارف عليها لتحرير التجميعة؛ و هي صيغة ماركداون الشهيرة [Markdown] (https://en.wikipedia.org/wiki/Markdown)**. \n\n## التثبيت \nعلى خادوم نكست كلاود عندك، ما عليك سوى الانتقال إلى جزء **«التطبيقات Apps»**، ثم  البحث عن تطبيقات **«الفرق Teams»** و **«التجميعات Collectives»** و تمكينها.",
     "Manage members" : "إدارة الإعضاء",
-    "Share with guests" : "شارِك مع الضيوف",
+    "Share link" : "مشاركة الرابط",
     "Export or print" : "صدّر أو اطبع",
     "Settings" : "الإعدادات",
     "Leave collective" : "غادر التجميعة collective",
@@ -30,7 +36,6 @@ OC.L10N.register(
     "Loading pages:" : "تحميل الصفحات:",
     "Loading images:" : "تحميل الصور:",
     "Last changed by" : "آخر تعديل قام به ",
-    "Last edited by {user}" : "آخر تعديلٍ كان من قِبٍَل {user}",
     "Members" : "الاعضاء",
     "No search results" : "لا توجد نتائج",
     "Promote to admin" : "رفع الرتبة إلى مشرف",
@@ -92,16 +97,16 @@ OC.L10N.register(
     "Deleted collectives" : "تجميعات محذوفة",
     "Restore" : "استعادة ",
     "Delete permanently" : "حذف بشكل دائم",
-    "Permanently delete collective »{collective}«" : "إحذف التجميعة نهائيّاً »{collective}«",
+    "Permanently delete collective \"{collective}\"" : "حذف التجميعة \"{collective}\" بشكل نهائي",
     "Delete corresponding team along with the collective?" : "هل ترغب في حذف الفريق المُناظِر مع التجميعة؟",
-    "Cancel" : "إلغاء",
     "Only collective" : "تجميعة فقط",
     "Collective and team" : "التجميعات و الفِرَق",
     "Only team owners can delete a team" : "يمكن فقط لمالك الفريق حذفه",
+    "Cancel" : "إلغاء",
     "New collective" : "تجميعة collective جديدة",
     "Select emoji" : "إختر رمزاً تعبيريّاً emji",
-    "Select a team..." : "إختَر فريقاً ...",
     "Select an existing team" : "إختَر فريقاً موجوداً",
+    "Select a team..." : "إختَر فريقاً ...",
     "Cancel selecting a team" : "إلغٍ عملية حذف فريق",
     "Enter the new collective name or pick an existing team" : "أدخِل اسم التجميعة الجديدة أو اختَر واحدةً من الموجود مسبقاً",
     "Add members" : "إضافة أعضاء",
@@ -171,15 +176,23 @@ OC.L10N.register(
     "Sorted by title" : "مُرتّب بحسب العنوان",
     "Sorted by recently changed" : "مُرتّب بحسب التعديلات الأخيرة",
     "Switch back to default sort order" : "عُد إلى الترتيب التلقائي",
+    "Results in title" : "نتائج في العنوان",
+    "Results in content" : "نتائج في المتن",
     "Hide templates" : "إخفِ القوالب",
     "Show templates" : "أظهِر القوالب",
     "Could not save page order for collective" : "تعذّر حفظ ترتيب صفحة التجميعة",
     "Quick share options dropdown" : "القائمة المنسدلة لخيارات المشاركة السريعة",
+    "Please enter the following required information before creating the share" : "الرجاء إدخال المعلومات المطلوبة التالية قبل إنشاء المشاركة",
+    "Password protection (enforced)" : "الحماية بكلمة مرور (إلزامي)",
+    "Set password" : "تعيين كلمة المرور",
+    "Password" : "كلمة المرور",
+    "Create share" : "إنشاء مشاركة",
     "Add another link" : "أضِف رابطاً آخر",
+    "Advanced settings" : "إعدادات متقدمة",
     "Unshare" : "إلغاء المشاركة",
     "Create a new share link" : "أنشِيءْ رابط مشاركة جديد",
+    "Update share" : "تحديث المشاركة",
     "Share link ({index})" : "رابط المشاركة ({index})",
-    "Share link" : "مشاركة الرابط",
     "View only" : "للعرض فقط",
     "Can edit" : "يمكنه التعديل",
     "Cannot copy, please copy the link manually" : "يتعذّر النسخ. يُرجى نسخ الرابط يدويًا",
@@ -232,7 +245,7 @@ OC.L10N.register(
     "in Collective {collective}" : "في  التجميعة {collective}",
     "Created collective \"%s\" for existing circle." : "التجميعة \"%s\" أُنشئت للدائرة القائمة.",
     "A share for collective %s exists already" : "مشاركة التجميعة %s موجودة مسبقاً",
-    "Collectives is a Nextcloud App for activist and community projects to organize together.\nCome and gather in collectives to build shared knowledge.\n\n* 👥 **Collective and non-hierarchical workflow by heart**: Collectives are\n  tied to a [Nextcloud Circle](https://github.com/nextcloud/circles) and\n  owned by the collective.\n* 📝 **Collaborative page editing** like known from Etherpad thanks to the\n  [Text app](https://github.com/nextcloud/text).\n* 🔤 **Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax**\n  for page formatting.\n\n## Installation\n\nIn your Nextcloud instance, simply navigate to **»Apps«**, find the\n**»Circles«** and **»Collectives«** apps and enable them." : "\"التجميعات\" Collectives هي تطبيق من نكست كلاود للنشطاء والمشاريع المجتمعية للتنظيم معًا. \nتعالوا واجتمعوا في مجموعات لبناء المعرفة المشتركة. \n* 👥 ** سير عمل جماعي وغير هرمي \n**: التجميعات مرتبطة بتطبيق نكست كلاود للدوائر Circles ـ [Circles](https://github.com/nextcloud/circles)  \n\n* 📝 **تحرير جماعي للتجميعة** كما في التطبيق الشهير إيثرباد EtherpadK. و هذا صار ممكنا بفضل تطبيق Text من نكست كلاود [Text app] (https://github.com/nextcloud/text).\n* 🔤 ** استخدام ماركدوان في تكوين الصفحات  [Markdown] (https://en.wikipedia.org/wiki/Markdown) على خادومك الخاص. \n\n## التنصيب\n\nما عليك سوى الانتقال إلى ** »التطبيقات« **، و ابحث عن ** »الدوائر Circles« ** و ** »التجميعات Collectives« ** و قم بتمكينها.",
+    "Collectives is a Nextcloud App for activist and community projects to organize together.\nCome and gather in collectives to build shared knowledge.\n\n* 👥 **Collective and non-hierarchical workflow by heart**: Collectives are\n  tied to a [Nextcloud Circle](https://github.com/nextcloud/circles) and\n  owned by the collective.\n* 📝 **Collaborative page editing** like known from Etherpad thanks to the\n  [Text app](https://github.com/nextcloud/text).\n* 🔤 **Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax**\n  for page formatting.\n\n## Installation\n\nIn your Nextcloud instance, simply navigate to **»Apps«**, find the\n**»Circles«** and **»Collectives«** apps and enable them." : "\"التجميعات\" Collectives هي تطبيق من نكست كلاود للنشطاء والمشاريع المجتمعية للتنظيم معًا. \nتعالوا واجتمعوا في مجموعات لبناء المعرفة المشتركة. \n* 👥 ** مسارات دفق جماعي غير هرمي \n**: التجميعات مرتبطة بتطبيق نكست كلاود للدوائر Circles ـ [Circles](https://github.com/nextcloud/circles)  \n\n* 📝 **تحرير جماعي للتجميعة** كما في التطبيق الشهير إيثرباد EtherpadK. و هذا صار ممكنا بفضل تطبيق Text من نكست كلاود [Text app] (https://github.com/nextcloud/text).\n* 🔤 ** استخدام ماركدوان في تكوين الصفحات  [Markdown] (https://en.wikipedia.org/wiki/Markdown) على خادومك الخاص. \n\n## التنصيب\n\nما عليك سوى الانتقال إلى ** »التطبيقات« **، و ابحث عن ** »الدوائر Circles« ** و ** »التجميعات Collectives« ** و قم بتمكينها.",
     "The contacts app is required to manage members" : "تطبيق جهات الاتصال مطلوب لإدارة الأعضاء",
     "Allow editing in share" : "السماح بالتحرير في المشاركة",
     "Copied" : "نُسخت ",
@@ -243,11 +256,13 @@ OC.L10N.register(
     "Could not unshare the collective" : "تعذّر إلغاء مُشاركة التجميعة",
     "Collective not found:" : "التجميعة غير موجودة:",
     "Select a collective or create a new one on the left." : "إختر تجميعةً أو أنشيء واحدةً جديدةً على الجانب.",
+    "Last edited by {user}" : "آخر تعديلٍ كان من قِبٍَل {user}",
     "Save new collective name" : "حفظ اسم التجميعة الجديدة",
     "Admins and moderaters" : "المشرفون و المنسّقون",
     "Members can be managed via the connected circle in the Contacts app." : "يمكن إدارة الأعضاء عبر الدائرة المتصلة connected circle في تطبيق جهات الاتصال.",
     "Open circle in Contacts" : "فتح الدائرة في جهات الاتصال",
     "Renaming is limited to owners of the circle" : "إعادة التسمية تقتصر على مُلّاك الدائرة",
+    "Permanently delete collective »{collective}«" : "إحذف التجميعة نهائيّاً »{collective}«",
     "Delete corresponding circle along with the collective?" : "إحذف الدائرة المناظرة مع التجميعة؟",
     "Collective and circle" : "تجميعة collective و دائرة circle",
     "Only circle owners can delete a circle" : "مُلّاك الدائرة فقط لهم صلاحية حذفها",

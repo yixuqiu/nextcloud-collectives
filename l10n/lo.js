@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "ແບ່ງປັນລິງ",
     "Settings" : "ການຕັ້ງຄ່າ",
     "Remove" : "ຍ້າຍອອກ",
     "Loading…" : "ກຳລັງໂຫຼດ",
@@ -11,9 +12,9 @@ OC.L10N.register(
     "Create" : "ສ້າງ",
     "Done" : "ສໍາເລັດ",
     "Deleted" : "ລືບ",
+    "Set password" : "ກຳນົດລະຫັດຜ່ານ",
     "Add another link" : "ເພີ່ມລິງອຶ່ນອີ",
     "Unshare" : "ຍົກເລີກການແບ່ງປັນ",
-    "Share link" : "ແບ່ງປັນລິງ",
     "Download" : "ດາວໂຫລດ",
     "Sharing" : "ການແບ່ງປັນ",
     "Link copied" : "ສຳເນົາລິງ"

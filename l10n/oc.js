@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Partejar lo ligam",
     "Settings" : "Paramètres",
     "Members" : "Membres",
     "No search results" : "pas cap de resultats de recèrca",
@@ -23,10 +24,12 @@ OC.L10N.register(
     "Move or copy" : "Desplaçar o copiar",
     "Title" : "Títol",
     "Deleted" : "Suprimit",
+    "Set password" : "Definir lo senhal",
+    "Password" : "Senhal",
     "Add another link" : "Ajustar un autre ligam",
+    "Advanced settings" : "Paramètres avançats",
     "Unshare" : "Partejar pas mai",
     "Create a new share link" : "Crear un ligam de partatge novèl",
-    "Share link" : "Partejar lo ligam",
     "View only" : "Veire solament",
     "Can edit" : "Pòt modificar",
     "Download" : "Telecargar",

@@ -1,4 +1,5 @@
 { "translations": {
+    "Share link" : "Compartir ligamine",
     "Settings" : "Configurationes",
     "Members" : "Membros",
     "Loading…" : "Cargante...",
@@ -12,8 +13,8 @@
     "Done" : "Preste",
     "Title" : "Titulo",
     "Deleted" : "Delite",
+    "Advanced settings" : "Configurationes avantiate",
     "Unshare" : "Cessa de compartir",
-    "Share link" : "Compartir ligamine",
     "Download" : "Discargar",
     "No other versions available" : "Nulle altere versiones disponibile",
     "Attachments" : "Attachamentos",

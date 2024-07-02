@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Lodañ al liamm",
     "Settings" : "Arventennoù",
     "No search results" : "Disoc'h enklask ebet",
     "admin" : "merour",
@@ -19,9 +20,9 @@ OC.L10N.register(
     "Move or copy" : "Dilec'hiañ pe eilañ",
     "Title" : "Titl",
     "Deleted" : "Lamet",
+    "Set password" : "Termeniñ ur ger-tremen",
     "Add another link" : "Implij ul liamm all",
     "Unshare" : "Na eskemm ken",
-    "Share link" : "Lodañ al liamm",
     "Can edit" : "Posuple eo embann",
     "Download" : "Pellgargañ",
     "No other versions available" : "Stumm all ebet kavet",

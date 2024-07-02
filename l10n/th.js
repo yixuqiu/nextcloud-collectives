@@ -2,6 +2,7 @@ OC.L10N.register(
     "collectives",
     {
     "You are not allowed to share %s" : "คุณไม่ได้รับอนุญาตให้แชร์ %s",
+    "Share link" : "แชร์ลิงก์",
     "Settings" : "การตั้งค่า",
     "Remove" : "ลบออก",
     "Loading…" : "กำลังโหลด…",
@@ -17,8 +18,8 @@ OC.L10N.register(
     "Title" : "ชื่อเรื่อง",
     "Deleted" : "ลบแล้ว",
     "Add another link" : "เพิ่มลิงก์อื่น",
+    "Advanced settings" : "การตั้งค่าขั้นสูง",
     "Unshare" : "เลิกแชร์",
-    "Share link" : "แชร์ลิงก์",
     "View only" : "ดูเท่านั้น",
     "Can edit" : "สามารถแก้ไข",
     "Cannot copy, please copy the link manually" : "ไม่สามารถคัดลอก กรุณาคัดลอกลิงก์เอง",

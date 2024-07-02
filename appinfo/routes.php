@@ -60,6 +60,8 @@ return [
 			'verb' => 'POST', 'requirements' => ['collectiveId' => '\d+', 'parentId' => '\d+']],
 		['name' => 'page#touch', 'url' => '/_api/{collectiveId}/_pages/{id}/touch',
 			'verb' => 'GET', 'requirements' => ['collectiveId' => '\d+', 'id' => '\d+']],
+		['name' => 'page#contentSearch', 'url' => '/_api/{collectiveId}/_pages/search',
+			'verb' => 'GET', 'requirements' => ['collectiveId' => '\d+', 'filterString' => '\s+']],
 		['name' => 'page#moveOrCopy', 'url' => '/_api/{collectiveId}/_pages/{id}',
 			'verb' => 'PUT', 'requirements' => ['collectiveId' => '\d+', 'id' => '\d+']],
 		['name' => 'page#moveOrCopyToCollective', 'url' => '/_api/{collectiveId}/_pages/{id}/to/{newCollectiveId}',
@@ -117,7 +119,13 @@ return [
 		['name' => 'start#index', 'url' => '/', 'verb' => 'GET'],
 
 		// Vue.js router public route (Vue.js frontend)
-		['name' => 'publicStart#publicIndex', 'url' => '/p/{token}/{path}', 'verb' => 'GET',
+		['name' => 'publicStart#showAuthenticate', 'url' => '/p/{token}/authenticate/{redirect}', 'verb' => 'GET'],
+		['name' => 'publicStart#authenticate', 'url' => '/p/{token}/authenticate/{redirect}', 'verb' => 'POST'],
+		// TODO: Remove the two uppercase PublicStart entries once Nextcloud 28 support gets removed
+		// See
+		['name' => 'PublicStart#showAuthenticate', 'url' => '/p/{token}/authenticate/{redirect}', 'verb' => 'GET'],
+		['name' => 'PublicStart#authenticate', 'url' => '/p/{token}/authenticate/{redirect}', 'verb' => 'POST'],
+		['name' => 'publicStart#showShare', 'url' => '/p/{token}/{path}', 'verb' => 'GET',
 			'requirements' => ['path' => '.*'],	'defaults' => ['path' => '']],
 
 		// Vue.js router route (Vue.js frontend)
@@ -126,9 +134,18 @@ return [
 			'defaults' => ['path' => '/']],
 	],
 	'ocs' => [
+		// User settings API
 		['name' => 'settings#getUserSetting', 'url' => '/api/v{apiVersion}/settings/user/{key}', 'verb' => 'GET',
 			'requirements' => ['apiVersion' => '1.0']],
 		['name' => 'settings#setUserSetting', 'url' => '/api/v{apiVersion}/settings/user', 'verb' => 'POST',
+			'requirements' => ['apiVersion' => '1.0']],
+
+		// Session API
+		['name' => 'session#create', 'url' => '/api/v{apiVersion}/session/{collectiveId}', 'verb' => 'POST',
+			'requirements' => ['apiVersion' => '1.0']],
+		['name' => 'session#sync', 'url' => '/api/v{apiVersion}/session/{collectiveId}', 'verb' => 'PUT',
+			'requirements' => ['apiVersion' => '1.0']],
+		['name' => 'session#close', 'url' => '/api/v{apiVersion}/session/{collectiveId}', 'verb' => 'DELETE',
 			'requirements' => ['apiVersion' => '1.0']],
 	]
 ];

@@ -1,7 +1,8 @@
 <template>
 	<NcAppContent>
 		<NcEmptyContent :title="t('collectives', 'Collectives')"
-			:description="t('collectives', 'Come, organize and build shared knowledge!')">
+			:description="t('collectives', 'Come, organize and build shared knowledge!')"
+			class="content-home">
 			<template #icon>
 				<CollectivesIcon />
 			</template>
@@ -52,7 +53,9 @@ export default {
 		// Open the navigation if we already have collectives.
 		// Only has an effect on mobile (where navigation is closed per default).
 		'collectives'(val, oldval) {
-			if (oldval.length === 0 && val.length > 0) {
+			if (oldval.length === 0 && val.length === 1) {
+				this.$router.push(`/${encodeURIComponent(val[0].name)}`)
+			} else if (oldval.length === 0 && val.length > 1) {
 				emit('toggle-navigation', { open: true })
 			}
 		},
@@ -68,3 +71,10 @@ export default {
 
 }
 </script>
+
+<style lang="scss" scoped>
+.content-home {
+	height: 100%;
+	padding: calc(var(--default-grid-baseline) * 4);
+}
+</style>

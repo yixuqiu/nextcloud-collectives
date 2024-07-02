@@ -38,13 +38,14 @@
 
 <script>
 import debounce from 'debounce'
-import { mapActions, mapGetters } from 'vuex'
+import { mapActions, mapGetters, mapMutations } from 'vuex'
 import { showError } from '@nextcloud/dialogs'
 import ChevronDownIcon from 'vue-material-design-icons/ChevronDown.vue'
 import ChevronLeftIcon from 'vue-material-design-icons/ChevronLeft.vue'
 import ChevronRightIcon from 'vue-material-design-icons/ChevronRight.vue'
 import RecentPageTile from './RecentPageTile.vue'
 import WidgetHeading from './WidgetHeading.vue'
+import { PATCH_COLLECTIVE_WITH_PROPERTY } from '../../../store/mutations.js'
 import { SET_COLLECTIVE_USER_SETTING_SHOW_RECENT_PAGES } from '../../../store/actions.js'
 
 const SLIDE_OFFSET = 198
@@ -58,6 +59,12 @@ export default {
 		ChevronRightIcon,
 		RecentPageTile,
 		WidgetHeading,
+	},
+
+	data() {
+		return {
+			updateButtonsDebounced: debounce(this.updateButtons, 50),
+		}
 	},
 
 	computed: {
@@ -85,22 +92,28 @@ export default {
 
 	mounted() {
 		this.$nextTick(() => {
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		})
-		this.$refs.pageslider.addEventListener('scroll', this.updateButtons)
+		this.$refs.pageslider.addEventListener('scroll', this.updateButtonsDebounced)
 	},
 
 	unmounted() {
-		this.$refs.pageslider.removeEventListener('scroll', this.updateButtons)
+		this.$refs.pageslider.removeEventListener('scroll', this.updateButtonsDebounced)
 	},
 
 	methods: {
+		...mapMutations({
+			patchCollectiveWithProperty: PATCH_COLLECTIVE_WITH_PROPERTY,
+		}),
+
 		...mapActions({
 			dispatchSetUserShowRecentPages: SET_COLLECTIVE_USER_SETTING_SHOW_RECENT_PAGES,
 		}),
 
 		toggleWidget() {
-			if (!this.isPublic) {
+			if (this.isPublic) {
+				this.patchCollectiveWithProperty({ id: this.currentCollective.id, property: 'userShowRecentPages', value: !this.showRecentPages })
+			} else {
 				this.dispatchSetUserShowRecentPages({ id: this.currentCollective.id, showRecentPages: !this.showRecentPages })
 					.catch((error) => {
 						console.error(error)
@@ -109,11 +122,11 @@ export default {
 			}
 
 			if (this.showRecentPages) {
-				this.updateButtons()
+				this.updateButtonsDebounced()
 			}
 		},
 
-		updateButtons: debounce(function() {
+		updateButtons() {
 			const pagesliderEl = this.$refs.pageslider
 			if (!pagesliderEl) {
 				return
@@ -129,7 +142,7 @@ export default {
 			} else {
 				this.$refs.buttonslideright.classList.remove('hidden')
 			}
-		}, 50),
+		},
 
 		slideLeft() {
 			const pagesliderEl = this.$refs.pageslider
@@ -139,7 +152,7 @@ export default {
 				left: pagesliderEl.scrollLeft = newScrollLeft,
 				behavior: 'smooth',
 			})
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		},
 
 		slideRight() {
@@ -151,7 +164,7 @@ export default {
 				left: pagesliderEl.scrollLeft = newScrollLeft,
 				behavior: 'smooth',
 			})
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		},
 	},
 }

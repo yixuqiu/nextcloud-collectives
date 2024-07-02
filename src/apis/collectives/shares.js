@@ -14,8 +14,9 @@ export function getShares(collectiveId) {
  * Create a public collective share
  *
  * @param {number} collectiveId Id of the colletive to be shared
+ * @param {string} password Optional password for the share
  */
-export function createCollectiveShare(collectiveId) {
+export function createCollectiveShare(collectiveId, password) {
 	return axios.post(collectivesUrl(collectiveId, 'share'))
 }
 
@@ -24,10 +25,12 @@ export function createCollectiveShare(collectiveId) {
  *
  * @param {number} collectiveId Id of the colletive the page belongs to
  * @param {number} pageId Id of the page to be shared
+ * @param {string} password Optional password for the share
  */
-export function createPageShare(collectiveId, pageId) {
+export function createPageShare(collectiveId, pageId, password) {
 	return axios.post(
 		collectivesUrl(collectiveId, '_pages', pageId, 'share'),
+		{ password },
 	)
 }
 
@@ -39,11 +42,12 @@ export function createPageShare(collectiveId, pageId) {
  * @param {number} share.pageId Id of the colletive
  * @param {string} share.token Token of the share to be updated
  * @param {boolean} share.editable editable state to set
+ * @param {boolean} share.password optional password for the share
  */
 export function updateShare(share) {
 	return axios.put(
 		shareUrl(share),
-		{ editable: share.editable },
+		{ editable: share.editable, password: share.password ?? '' },
 	)
 }
 

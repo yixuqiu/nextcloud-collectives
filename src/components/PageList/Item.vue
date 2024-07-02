@@ -11,7 +11,7 @@
 			'highlight-target': isHighlightedTarget,
 			'highlight-animation': isHighlightAnimation,
 		}"
-		draggable
+		draggable="true"
 		@dragstart="onDragstart"
 		@dragend="onDragend"
 		@dragover.prevent="onDragover"
@@ -50,7 +50,7 @@
 			draggable="false"
 			class="app-content-list-item-link">
 			<div ref="page-title"
-				v-tooltip="pageTitleIfTruncated"
+				:title="pageTitleIfTruncated"
 				class="app-content-list-item-line-one"
 				:class="{ 'template': isTemplate }"
 				@click="expand(pageId)">

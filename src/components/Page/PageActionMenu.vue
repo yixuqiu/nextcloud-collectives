@@ -23,11 +23,13 @@
 
 			<!-- Sidebar toggle: only displayed on mobile and in page title menu -->
 			<NcActionButton v-if="displaySidebarAction"
-				icon="icon-menu-sidebar"
 				:aria-label="t('collectives', 'Open page sidebar')"
 				aria-controls="app-sidebar-vue"
 				:close-after-click="true"
 				@click="toggle('sidebar')">
+				<template #icon>
+					<DockRightIcon :size="20" />
+				</template>
 				{{ t('collectives', 'Open page sidebar') }}
 			</NcActionButton>
 			<NcActionSeparator v-if="displaySidebarAction" />
@@ -57,15 +59,15 @@
 				{{ t('collectives', 'Show in Files') }}
 			</NcActionLink>
 
-			<!-- Share page action: only displayed in page list -->
-			<NcActionButton v-if="inPageList && currentCollectiveCanShare"
+			<!-- Share page action: only displayed in page list and not for landing page (already in collectives actions there) -->
+			<NcActionButton v-if="inPageList && currentCollectiveCanShare && !isLandingPage"
 				:close-after-click="true"
 				@click.native="show('details')"
 				@click="openShareTab">
 				<template #icon>
 					<ShareVariantIcon :size="20" />
 				</template>
-				{{ t('collectives', 'Share with guests') }}
+				{{ t('collectives', 'Share link') }}
 			</NcActionButton>
 
 			<!-- Edit page emoji: only displayed in page list -->
@@ -126,6 +128,7 @@ import { NcActions, NcActionButton, NcActionCheckbox, NcActionLink, NcActionSepa
 import isMobile from '@nextcloud/vue/dist/Mixins/isMobile.js'
 import CollectiveActions from '../Collective/CollectiveActions.vue'
 import DeleteIcon from 'vue-material-design-icons/Delete.vue'
+import DockRightIcon from 'vue-material-design-icons/DockRight.vue'
 import EmoticonOutlineIcon from 'vue-material-design-icons/EmoticonOutline.vue'
 import FormatListBulletedIcon from 'vue-material-design-icons/FormatListBulleted.vue'
 import OpenInNewIcon from 'vue-material-design-icons/OpenInNew.vue'
@@ -147,6 +150,7 @@ export default {
 		NcActionLink,
 		NcActionSeparator,
 		DeleteIcon,
+		DockRightIcon,
 		EmoticonOutlineIcon,
 		FormatListBulletedIcon,
 		OpenInNewIcon,

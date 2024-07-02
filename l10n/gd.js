@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Ceangal co-roinnidh",
     "Settings" : "Roghainnean",
     "Remove" : "Thoir air falbh",
     "Loading…" : "’Ga luchdadh…",
@@ -9,9 +10,10 @@ OC.L10N.register(
     "Back" : "Air ais",
     "Create" : "Cruthaich",
     "Deleted" : "Chaidh a sguabadh às",
+    "Set password" : "Suidhich facal-faire",
+    "Password" : "Facal-faire",
     "Add another link" : "Cuir ceangal eile ris",
     "Unshare" : "Na co-roinn tuilleadh",
-    "Share link" : "Ceangal co-roinnidh",
     "Download" : "Luchdaich a-nuas",
     "Sharing" : "Co-roinneadh",
     "Link copied" : "Chaidh lethbhreac dhen cheangal a dhèanamh"

@@ -1,95 +1,176 @@
 <template>
 	<li class="sharing-entry sharing-entry__link">
-		<NcAvatar :is-no-user="true"
-			icon-class="avatar-link-share icon-public-white"
-			class="sharing-entry__avatar" />
-		<div class="sharing-entry__summary">
-			<div class="sharing-entry__desc">
-				<span class="sharing-entry__title" :title="title">
-					{{ title }}
-				</span>
-				<div v-if="share"
-					ref="quickShareDropdownContainer"
-					:class="{ 'active': showDropdown, 'share-select': true }">
-					<span :id="dropdownId"
-						class="trigger-text"
-						:aria-expanded="showDropdown"
-						:aria-haspopup="true"
-						aria-label="t('collectives', 'Quick share options dropdown')"
-						@click="toggleDropdown">
-						{{ selectedDropdownOption }}
-						<TriangleSmallDownIcon :size="15" />
+		<div class="sharing-entry__entry">
+			<NcAvatar :is-no-user="true"
+				icon-class="avatar-link-share icon-public-white"
+				class="sharing-entry__avatar" />
+
+			<div class="sharing-entry__summary">
+				<div class="sharing-entry__desc">
+					<span class="sharing-entry__title" :title="title">
+						{{ title }}
 					</span>
-					<div v-if="showDropdown"
-						ref="quickShareDropdown"
-						class="share-select-dropdown"
-						:aria-labelledby="dropdownId"
-						tabindex="0"
-						@keydown.down="handleArrowDown"
-						@keydown.up="handleArrowUp"
-						@keydown.esc="closeDropdown">
-						<button v-for="option in dropdownOptions"
-							:key="option"
-							class="dropdown-item"
-							:class="{ 'selected': option === selectedDropdownOption }"
-							:aria-selected="option === selectedDropdownOption"
-							@click="selectOption(option)">
-							{{ option }}
-						</button>
+					<div v-if="share"
+						ref="quickShareDropdownContainer"
+						:class="{ 'active': showDropdown, 'share-select': true }">
+						<span :id="dropdownId"
+							class="trigger-text"
+							:aria-expanded="showDropdown"
+							:aria-haspopup="true"
+							aria-label="t('collectives', 'Quick share options dropdown')"
+							@click="toggleDropdown">
+							{{ selectedDropdownOption }}
+							<TriangleSmallDownIcon :size="15" />
+						</span>
+						<div v-if="showDropdown"
+							ref="quickShareDropdown"
+							class="share-select-dropdown"
+							:aria-labelledby="dropdownId"
+							tabindex="0"
+							@keydown.down="handleArrowDown"
+							@keydown.up="handleArrowUp"
+							@keydown.esc="closeDropdown">
+							<button v-for="option in dropdownOptions"
+								:key="option"
+								class="dropdown-item"
+								:class="{ 'selected': option === selectedDropdownOption }"
+								:aria-selected="option === selectedDropdownOption"
+								@click="selectOption(option)">
+								{{ option }}
+							</button>
+						</div>
 					</div>
 				</div>
+
+				<!-- clipboard -->
+				<NcActions v-if="share && share.token" ref="copyButton" class="sharing-entry__copy">
+					<NcActionButton :aria-label="copyLinkTooltip"
+						@click.prevent="copyLink">
+						<template #icon>
+							<CheckIcon v-if="copySuccess" :size="20" />
+							<NcLoadingIcon v-else-if="copyLoading" :size="20" />
+							<ContentCopyIcon v-else :size="20" />
+						</template>
+						{{ copyLinkTooltip }}
+					</NcActionButton>
+				</NcActions>
 			</div>
 
-			<!-- clipboard -->
-			<NcActions v-if="share && share.token" ref="copyButton" class="sharing-entry__copy">
-				<NcActionButton :aria-label="copyLinkTooltip"
-					@click.prevent="copyLink">
+			<!-- pending actions -->
+			<NcActions v-if="isPending"
+				class="sharing-entry__pending_actions"
+				:aria-label="actionsTooltip"
+				menu-align="right"
+				:open.sync="open"
+				@close="onCancelPending">
+				<NcActionText>
 					<template #icon>
-						<CheckIcon v-if="copySuccess" :size="20" />
-						<NcLoadingIcon v-else-if="copyLoading" :size="20" />
-						<ContentCopyIcon v-else :size="20" />
+						<InformationOutlineIcon :size="20" />
 					</template>
-					{{ copyLinkTooltip }}
-				</NcActionButton>
-			</NcActions>
-		</div>
+					{{ t('collectives', 'Please enter the following required information before creating the share') }}
+				</NcActionText>
 
-		<!-- actions -->
-		<NcActions v-if="!loading"
-			class="sharing-entry__actions"
-			:aria-label="actionsTooltip"
-			menu-align="right"
-			:open.sync="open">
-			<template v-if="share">
-				<NcActionButton class="new-share-link" @click.prevent.stop="onNewShare">
+				<NcActionText v-if="isPasswordEnforced">
 					<template #icon>
-						<PlusIcon :size="20" />
+						<LockIcon :size="20" />
 					</template>
-					{{ t('collectives', 'Add another link') }}
+					{{ t('collectives', 'Password protection (enforced)') }}
+				</NcActionText>
+				<NcActionCheckbox v-else-if="isPasswordDefaultEnabled"
+					:checked.sync="isPendingPasswordProtected"
+					:disabled="loading"
+					@uncheck="onPendingDisablePassword">
+					{{ t('collectives', 'Set password') }}
+				</NcActionCheckbox>
+				<NcActionInput v-if="isPendingPasswordProtected"
+					autocomplete="new-password"
+					:value.sync="pendingPassword"
+					:error="passwordError"
+					:helper-text="errorPasswordLabel"
+					:required="isPasswordEnforced"
+					:label="t('collectives', 'Password')"
+					:disabled="loading"
+					@submit="onNewShare" />
+				<NcActionButton @click.prevent.stop="onNewShare">
+					<template #icon>
+						<CheckIcon :size="20" />
+					</template>
+					{{ t('files_sharing', 'Create share') }}
 				</NcActionButton>
-
-				<NcActionButton class="unshare-button" @click.prevent="onDelete">
+				<NcActionButton @click.prevent.stop="onCancelPending">
 					<template #icon>
 						<CloseIcon :size="20" />
 					</template>
-					{{ t('collectives', 'Unshare') }}
+					{{ t('collectives', 'Cancel') }}
 				</NcActionButton>
-			</template>
+			</NcActions>
 
-			<!-- Create new share -->
-			<NcActionButton v-else
-				class="new-share-link"
-				:aria-label="t('collectives', 'Create a new share link')"
-				@click.prevent.stop="onNewShare">
-				<template #icon>
-					<PlusIcon :size="20" />
+			<!-- actions -->
+			<NcActions v-else-if="!loading"
+				class="sharing-entry__actions"
+				:aria-label="actionsTooltip"
+				menu-align="right"
+				:open.sync="open">
+				<template v-if="share">
+					<NcActionButton class="new-share-link" @click.prevent.stop="onNewShare">
+						<template #icon>
+							<PlusIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Add another link') }}
+					</NcActionButton>
+
+					<NcActionButton class="new-share-link" :close-after-click="true" @click.prevent.stop="toggleSettings">
+						<template #icon>
+							<CogIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Advanced settings') }}
+					</NcActionButton>
+
+					<NcActionButton class="unshare-button" @click.prevent="onDelete">
+						<template #icon>
+							<CloseIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Unshare') }}
+					</NcActionButton>
 				</template>
-				{{ t('collectives', 'Create a new share link') }}
-			</NcActionButton>
-		</NcActions>
 
-		<!-- loading indicator to replace the menu -->
-		<NcLoadingIcon v-else :size="20" class="sharing-entry__loading" />
+				<!-- Create new share -->
+				<NcActionButton v-else
+					class="new-share-link"
+					:aria-label="t('collectives', 'Create a new share link')"
+					@click.prevent.stop="onNewShare">
+					<template #icon>
+						<PlusIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Create a new share link') }}
+				</NcActionButton>
+			</NcActions>
+
+			<!-- loading indicator to replace the menu -->
+			<NcLoadingIcon v-else :size="20" class="sharing-entry__loading" />
+		</div>
+
+		<div v-if="showSettings" class="sharing-entry__settings">
+			<NcCheckboxRadioSwitch :checked.sync="isPasswordProtected" :disabled="isPasswordEnforced">
+				{{ t('collectives', 'Set password') }}
+			</NcCheckboxRadioSwitch>
+			<NcPasswordField v-if="isPasswordProtected"
+				autocomplete="new-password"
+				:value="hasUnsavedPassword ? share.newPassword : ''"
+				:error="passwordError"
+				:helper-text="errorPasswordLabel"
+				:required="isPasswordEnforced"
+				:label="t('collectives', 'Password')"
+				@update:value="onPasswordChange" />
+			<div class="button-group">
+				<NcButton @click="cancelSettings">
+					{{ t('collectives', 'Cancel') }}
+				</NcButton>
+				<NcButton type="primary" @click="saveSettings">
+					{{ t('collectives', 'Update share') }}
+				</NcButton>
+			</div>
+		</div>
 	</li>
 </template>
 
@@ -98,10 +179,24 @@ import { mapActions, mapGetters } from 'vuex'
 import { generateUrl } from '@nextcloud/router'
 import { showError, showSuccess } from '@nextcloud/dialogs'
 import { createFocusTrap } from 'focus-trap'
-import { NcAvatar, NcActionButton, NcActions, NcLoadingIcon } from '@nextcloud/vue'
+import {
+	NcAvatar,
+	NcActionButton,
+	NcActionCheckbox,
+	NcActionInput,
+	NcActionText,
+	NcActions,
+	NcButton,
+	NcCheckboxRadioSwitch,
+	NcLoadingIcon,
+	NcPasswordField,
+} from '@nextcloud/vue'
 import CheckIcon from 'vue-material-design-icons/Check.vue'
 import CloseIcon from 'vue-material-design-icons/Close.vue'
+import CogIcon from 'vue-material-design-icons/Cog.vue'
 import ContentCopyIcon from 'vue-material-design-icons/ContentCopy.vue'
+import InformationOutlineIcon from 'vue-material-design-icons/InformationOutline.vue'
+import LockIcon from 'vue-material-design-icons/Lock.vue'
 import PlusIcon from 'vue-material-design-icons/Plus.vue'
 import TriangleSmallDownIcon from 'vue-material-design-icons/TriangleSmallDown.vue'
 
@@ -118,11 +213,20 @@ export default {
 	components: {
 		CheckIcon,
 		CloseIcon,
+		CogIcon,
 		ContentCopyIcon,
+		InformationOutlineIcon,
+		LockIcon,
 		NcActionButton,
+		NcActionCheckbox,
+		NcActionInput,
+		NcActionText,
 		NcActions,
-		NcLoadingIcon,
 		NcAvatar,
+		NcButton,
+		NcCheckboxRadioSwitch,
+		NcLoadingIcon,
+		NcPasswordField,
 		PlusIcon,
 		TriangleSmallDownIcon,
 	},
@@ -145,9 +249,14 @@ export default {
 	data() {
 		return {
 			showDropdown: false,
+			showSettings: false,
 			loading: false,
 			open: false,
 			focusTrap: null,
+			passwordError: false,
+			isPending: false,
+			isPendingPasswordProtected: true,
+			pendingPassword: '',
 		}
 	},
 
@@ -212,6 +321,40 @@ export default {
 
 		actionsTooltip() {
 			return t('collectives', 'Actions for "{title}"', { title: this.title })
+		},
+
+		isPasswordEnforced() {
+			return OC.appConfig.core.enforcePasswordForPublicLink === true
+		},
+
+		isPasswordDefaultEnabled() {
+			return OC.appConfig.core.enableLinkPasswordByDefault === true
+		},
+
+		isPasswordProtected: {
+			get() {
+				return !!this.share.password
+			},
+			set(enabled) {
+				if (enabled) {
+					const password = this.generatePassword()
+					this.$set(this.share, 'password', password)
+					this.$set(this.share, 'newPassword', password)
+				} else {
+					this.$set(this.share, 'password', '')
+					this.$delete(this.share, 'newPassword')
+				}
+			},
+		},
+
+		hasUnsavedPassword() {
+			return this.share.newPassword !== undefined
+		},
+
+		errorPasswordLabel() {
+			return this.passwordError
+				? t('collectives', "Password field can't be empty")
+				: undefined
 		},
 	},
 
@@ -306,8 +449,19 @@ export default {
 			await this.copyToClipboard(this.shareUrl)
 		},
 
+		toggleSettings() {
+			this.showSettings = !this.showSettings
+		},
+
 		async onNewShare() {
 			if (this.loading) {
+				return
+			}
+
+			if (!this.isPending && (this.isPasswordDefaultEnabled || this.isPasswordEnforced)) {
+				this.open = true
+				this.isPending = true
+				this.pendingPassword = this.generatePassword()
 				return
 			}
 
@@ -317,6 +471,7 @@ export default {
 				await this.dispatchCreateShare({
 					collectiveId: this.currentCollective.id,
 					pageId: this.isPageShare ? this.currentPage.id : 0,
+					password: this.pendingPassword,
 				})
 				const message = this.isPageShare
 					? t('collectives', 'Page "{name}" has been shared', { name: this.currentPage.title })
@@ -331,7 +486,44 @@ export default {
 				this.open = true
 			} finally {
 				this.loading = false
+				this.isPending = false
+				this.pendingPassword = ''
 			}
+		},
+
+		onPendingDisablePassword() {
+			this.pendingPassword = ''
+		},
+
+		onCancelPending() {
+			this.isPending = false
+			this.pendingPassword = ''
+		},
+
+		async onPasswordChange(password) {
+			this.passwordError = !(password.trim())
+			this.$set(this.share, 'newPassword', password)
+		},
+
+		cancelSettings() {
+			if (this.hasUnsavedPassword) {
+				this.$delete(this.share, 'newPassword')
+			}
+			this.showSettings = false
+		},
+
+		async saveSettings() {
+			if (this.isPasswordProtected) {
+				if (this.hasUnsavedPassword) {
+					this.$set(this.share, 'password', this.share.newPassword)
+					this.$delete(this.share, 'newPassword')
+				}
+			} else {
+				this.$set(this.share, 'password', '')
+			}
+
+			await this.onUpdate(this.share)
+			this.showSettings = false
 		},
 
 		async onUpdate(share) {
@@ -375,15 +567,32 @@ export default {
 				this.loading = false
 			}
 		},
+
+		// Mostly copied from `apps/files_sharing/src/utils/GeneratePassword.js`
+		generatePassword() {
+			// note: some chars removed on purpose to make them human friendly when read out
+			const passwordSet = 'abcdefgijkmnopqrstwxyzABCDEFGHJKLMNPQRSTWXYZ23456789'
+			const array = new Uint8Array(10)
+			const ratio = passwordSet.length / 255
+			self.crypto.getRandomValues(array)
+			let password = ''
+			for (let i = 0; i < array.length; i++) {
+				password += passwordSet.charAt(array[i] * ratio)
+			}
+			return password
+		},
 	},
 }
 </script>
 
 <style scoped lang="scss">
 .sharing-entry {
-	display: flex;
-	align-items: center;
-	min-height: 44px;
+	&__entry {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		min-height: 44px;
+	}
 
 	&__summary {
 		padding: 8px;
@@ -413,6 +622,21 @@ export default {
 
 	:deep(.avatar-link-share) {
 		background-color: var(--color-primary-element);
+	}
+
+	.button-group {
+		display: flex;
+		justify-content: space-between;
+		width: 100%;
+		margin-top: 16px;
+
+		button {
+			margin-left: 16px;
+
+			&:first-child {
+				margin-left: 0;
+			}
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 OC.L10N.register(
     "collectives",
     {
+    "Share link" : "Fren aseɣwen",
     "Settings" : "Iɣewwaṛen",
     "No search results" : "Ulac igmaḍ n unadi",
     "Remove" : "Kkes",
@@ -12,8 +13,8 @@ OC.L10N.register(
     "Done" : "Immed",
     "Title" : "Azwel",
     "Deleted" : "Yettwakkes",
+    "Set password" : "Sbadu awal uffir",
     "Add another link" : "Rnu aseɣwen-nniḍen",
-    "Share link" : "Fren aseɣwen",
     "Download" : "Sider",
     "Attachments" : "Ticeqqufin",
     "Sharing" : "Beṭṭu",

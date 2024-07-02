@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace OCA\Collectives\Controller;
 
 use OCA\Collectives\Service\AttachmentService;
+use OCA\Collectives\Service\CollectiveService;
 use OCA\Collectives\Service\PageService;
+use OCA\Collectives\Service\SearchService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\IRequest;
@@ -20,6 +22,8 @@ class PageController extends Controller {
 		private PageService $service,
 		private AttachmentService $attachmentService,
 		private IUserSession $userSession,
+		private SearchService $indexedSearchService,
+		private CollectiveService $collectiveService,
 		private LoggerInterface $logger) {
 		parent::__construct($appName, $request);
 	}
@@ -76,6 +80,25 @@ class PageController extends Controller {
 			$pageInfo = $this->service->touch($collectiveId, $id, $userId);
 			return [
 				"data" => $pageInfo
+			];
+		}, $this->logger);
+	}
+
+
+	/**
+	 * @NoAdminRequired
+	 */
+	public function contentSearch(int $collectiveId, string $searchString): DataResponse {
+		return $this->handleErrorResponse(function () use ($collectiveId, $searchString): array {
+			$userId = $this->getUserId();
+			$collective = $this->collectiveService->getCollective($collectiveId, $userId);
+			$results = $this->indexedSearchService->searchCollective($collective, $searchString, 100);
+			$pages = [];
+			foreach ($results as $value) {
+				$pages[] = $this->service->find($collectiveId, $value['id'], $userId);
+			}
+			return [
+				"data" => $pages
 			];
 		}, $this->logger);
 	}

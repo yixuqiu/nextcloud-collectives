@@ -41,7 +41,8 @@ class PageService {
 		private UserFolderHelper $userFolderHelper,
 		private IUserManager $userManager,
 		private IConfig $config,
-		ContainerInterface $container) {
+		ContainerInterface $container,
+		private SessionService $sessionService) {
 		try {
 			$this->pushQueue = $container->get(IQueue::class);
 		} catch (Exception) {
@@ -238,28 +239,43 @@ class PageService {
 		return $pageInfo;
 	}
 
-	private function notifyPush(int $collectiveId, string $userId): void {
+	private function notifyPush(int $collectiveId): void {
 		if (!$this->pushQueue) {
 			return;
 		}
 
-		$this->pushQueue->push('notify_custom', [
-			'user' => $userId,
-			'message' => 'collectives_' . $collectiveId . '_pagelist',
-		]);
+		$sessionUsers = $this->sessionService->getSessionUsers($collectiveId);
+		foreach ($sessionUsers as $userId) {
+			$this->pushQueue->push('notify_custom', [
+				'user' => $userId,
+				'message' => 'collectives_' . $collectiveId . '_pagelist',
+			]);
+		}
 	}
 
-	private function updatePage(int $collectiveId, int $fileId, string $userId, ?string $emoji = null, ?string $subpageOrder = null): void {
+	private function updatePage(int $collectiveId, int $fileId, string $userId, ?string $emoji = null): void {
 		$page = new Page();
 		$page->setFileId($fileId);
 		$page->setLastUserId($userId);
 		if ($emoji !== null) {
 			$page->setEmoji($emoji);
 		}
-		if ($subpageOrder) {
-			$page->setSubpageOrder($subpageOrder);
-		}
 		$this->pageMapper->updateOrInsert($page);
+		$this->notifyPush($collectiveId);
+	}
+
+	/**
+	 * @throws NotFoundException
+	 */
+	private function updateSubpageOrder(int $collectiveId, int $fileId, string $userId, string $subpageOrder): void {
+		if (null === $oldPage = $this->pageMapper->findByFileId($fileId)) {
+			throw new NotFoundException('page not found');
+		}
+		$page = new Page();
+		$page->setId($oldPage->getId());
+		$page->setFileId($fileId);
+		$page->setSubpageOrder($subpageOrder);
+		$this->pageMapper->update($page);
 		$this->notifyPush($collectiveId, $userId);
 	}
 
@@ -815,7 +831,7 @@ class PageService {
 		SubpageOrderService::verify($subpageOrder);
 
 		$pageInfo->setSubpageOrder($subpageOrder);
-		$this->updatePage($collectiveId, $pageInfo->getId(), $userId, null, $subpageOrder);
+		$this->updateSubpageOrder($collectiveId, $pageInfo->getId(), $userId, $subpageOrder);
 		return $pageInfo;
 	}
 
@@ -845,7 +861,7 @@ class PageService {
 		$newSubpageOrder = SubpageOrderService::add($cleanedSubpageOrder, $addId, $index);
 
 		$pageInfo->setSubpageOrder($newSubpageOrder);
-		$this->updatePage($collectiveId, $pageInfo->getId(), $userId, null, $newSubpageOrder);
+		$this->updateSubpageOrder($collectiveId, $pageInfo->getId(), $userId, $newSubpageOrder);
 	}
 
 	/**
@@ -861,7 +877,7 @@ class PageService {
 		$newSubpageOrder = SubpageOrderService::remove($pageInfo->getSubpageOrder(), $removeId);
 
 		$pageInfo->setSubpageOrder($newSubpageOrder);
-		$this->updatePage($collectiveId, $pageInfo->getId(), $userId, null, $newSubpageOrder);
+		$this->updateSubpageOrder($collectiveId, $pageInfo->getId(), $userId, $newSubpageOrder);
 	}
 
 	/**
@@ -895,7 +911,7 @@ class PageService {
 			// Delete directly if trash is not available
 			$this->pageMapper->deleteByFileId($id);
 			$this->removeFromSubpageOrder($collectiveId, $parentId, $id, $userId);
-			$this->notifyPush($collectiveId, $userId);
+			$this->notifyPush($collectiveId);
 			return $pageInfo;
 		}
 
@@ -905,7 +921,7 @@ class PageService {
 		}
 
 		$pageInfo->setTrashTimestamp($trashedPage->getTrashTimestamp());
-		$this->notifyPush($collectiveId, $userId);
+		$this->notifyPush($collectiveId);
 		return $pageInfo;
 	}
 
@@ -932,7 +948,7 @@ class PageService {
 			throw new NotFoundException('Failed to restore page ' . $id . ':' . $e->getMessage(), 0, $e);
 		}
 
-		$this->notifyPush($collectiveId, $userId);
+		$this->notifyPush($collectiveId);
 		return $this->findByFileId($collectiveId, $id, $userId);
 	}
 
@@ -959,7 +975,7 @@ class PageService {
 			throw new NotFoundException('Failed to delete page from trash ' . $id . ':' . $e->getMessage());
 		}
 
-		$this->notifyPush($collectiveId, $userId);
+		$this->notifyPush($collectiveId);
 	}
 
 	public function getPageLink(string $collectiveName, PageInfo $pageInfo, bool $withFileId = true): string {

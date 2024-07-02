@@ -12,7 +12,7 @@
 		<NcActionButton v-if="collectiveCanShare(collective)"
 			:close-after-click="true"
 			@click="openShareTab(collective)">
-			{{ t('collectives', 'Share with guests') }}
+			{{ t('collectives', 'Share link') }}
 			<template #icon>
 				<ShareVariantIcon :size="20" />
 			</template>
@@ -33,7 +33,7 @@
 			</template>
 			{{ t('collectives', 'Settings') }}
 		</NcActionButton>
-		<NcActionButton v-if="!isPublic"
+		<NcActionButton v-if="!isPublic && collective.canLeave !== false"
 			:close-after-click="true"
 			@click="leaveCollectiveWithUndo(collective)">
 			{{ t('collectives', 'Leave collective') }}
