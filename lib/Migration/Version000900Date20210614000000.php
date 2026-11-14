@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Migration;
 
 use Closure;
@@ -16,7 +21,7 @@ class Version000900Date20210614000000 extends SimpleMigrationStep {
 
 		$table = $schema->getTable('collectives');
 		if ($table->hasColumn('circle_unique_id')) {
-			$table->changeColumn('circle_unique_id', [
+			$table->modifyColumn('circle_unique_id', [
 				'length' => 31,
 			]);
 			return $schema;

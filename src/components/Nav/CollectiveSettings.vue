@@ -1,168 +1,172 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<NcAppSettingsDialog :open.sync="showSettings"
+	<NcAppSettingsDialog
+		v-model:open="showSettings"
 		:name="t('collectives', 'Collective settings')"
-		:show-navigation="true">
+		showNavigation>
 		<NcAppSettingsSection id="name-and-emoji" :name="t('collectives', 'Name and emoji')">
-			<div class="collective-name">
-				<NcEmojiPicker :show-preview="true"
-					:allow-unselect="true"
-					:selected-emoji="collective.emoji"
-					@select="updateEmoji"
-					@unselect="unselectEmoji">
-					<NcButton type="tertiary"
-						:aria-label="t('collectives', 'Select emoji for collective')"
-						:class="{'loading': loading('updateCollectiveEmoji') || loading('renameCollective')}"
-						class="button-emoji"
-						@click.prevent>
-						{{ collective.emoji }}
-						<template v-if="!collective.emoji" #icon>
-							<EmoticonOutline :size="20" />
-						</template>
-					</NcButton>
-				</NcEmojiPicker>
-				<NcTextField ref="collectiveName"
-					:value.sync="newCollectiveName"
-					:disabled="!isCollectiveOwner(collective)"
-					:label="getRenameLabel"
-					:error="isNameTooShort"
-					:show-trailing-button="!isNameTooShort"
-					trailing-button-icon="arrowRight"
-					class="collective-name-input"
-					@blur="renameCollective()"
-					@keypress.enter.prevent="renameCollective()"
-					@trailing-button-click="renameCollective()" />
-			</div>
-			<div class="collective-name-error-placeholder">
-				<div v-if="getNameError" class="collective-name-error">
-					<AlertCircleOutlineIcon :size="16" />
-					<label for="collective-name" class="modal-collective-name-error-label">
-						{{ getNameError }}
-					</label>
+			<NcFormGroup :label="t('collectives', 'Name and emoji')" hideLabel>
+				<div class="collective-name-and-emoji">
+					<NcEmojiPicker
+						showPreview
+						allowUnselect
+						:selectedEmoji="collective.emoji"
+						@select="updateEmoji"
+						@unselect="unselectEmoji">
+						<NcButton
+							variant="tertiary"
+							:aria-label="t('collectives', 'Select emoji for collective')"
+							:class="{ loading: loading('updateCollectiveEmoji') || loading('renameCollective') }"
+							class="button-emoji"
+							@click.prevent>
+							{{ collective.emoji }}
+							<template v-if="!collective.emoji" #icon>
+								<Emoticon :size="20" />
+							</template>
+						</NcButton>
+					</NcEmojiPicker>
+					<NcTextField
+						v-model="newCollectiveName"
+						:label="t('collectives', 'Name of the collective')"
+						:error="isNameTooShort"
+						:showTrailingButton="!isNameTooShort"
+						trailingButtonIcon="arrowEnd"
+						class="collective-name-input"
+						@blur="renameCollective()"
+						@keydown.enter.prevent="renameCollective()"
+						@trailingButtonClick="renameCollective()" />
 				</div>
-			</div>
+				<div class="collective-name-error-placeholder">
+					<div v-if="getNameError" class="collective-name-error">
+						<AlertCircleIcon :size="16" />
+						<label for="collective-name" class="modal-collective-name-error-label">
+							{{ getNameError }}
+						</label>
+					</div>
+				</div>
+			</NcFormGroup>
 		</NcAppSettingsSection>
 
 		<NcAppSettingsSection id="permissions" :name="t('collectives', 'Permissions')">
-			<div class="subsection-header">
-				{{ t('collectives', 'Allow editing for') }}
-			</div>
+			<NcRadioGroup v-model="editPermissions" :label="t('collectives', 'Allow editing for')" class="edit-permissions">
+				<NcRadioGroupButton :label="t('collectives', 'Admins only')" :value="String(memberLevels.LEVEL_ADMIN)">
+					<template #icon>
+						<CrownIcon />
+					</template>
+				</NcRadioGroupButton>
+				<NcRadioGroupButton :label="t('collectives', 'Admins and moderators')" :value="String(memberLevels.LEVEL_MODERATOR)">
+					<template #icon>
+						<AccountCogIcon />
+					</template>
+				</NcRadioGroupButton>
+				<NcRadioGroupButton :label="t('collectives', 'All members')" :value="String(memberLevels.LEVEL_MEMBER)">
+					<template #icon>
+						<AccountIcon />
+					</template>
+				</NcRadioGroupButton>
+			</NcRadioGroup>
 
-			<div class="permissions-input-edit">
-				<NcCheckboxRadioSwitch :checked.sync="editPermissions"
-					:value="String(memberLevels.LEVEL_ADMIN)"
-					:loading="loading('updateCollectiveEditPermissions_' + String(memberLevels.LEVEL_ADMIN))"
-					name="edit_admins"
-					type="radio">
-					{{ t('collectives', 'Admins only') }}
-				</NcCheckboxRadioSwitch>
-				<NcCheckboxRadioSwitch :checked.sync="editPermissions"
-					:value="String(memberLevels.LEVEL_MODERATOR)"
-					:loading="loading('updateCollectiveEditPermissions_' + String(memberLevels.LEVEL_MODERATOR))"
-					name="edit_moderators"
-					type="radio">
-					{{ t('collectives', 'Admins and moderators') }}
-				</NcCheckboxRadioSwitch>
-				<NcCheckboxRadioSwitch :checked.sync="editPermissions"
-					:value="String(memberLevels.LEVEL_MEMBER)"
-					:loading="loading('updateCollectiveEditPermissions_' + String(memberLevels.LEVEL_MEMBER))"
-					name="edit_members"
-					type="radio">
-					{{ t('collectives', 'All members') }}
-				</NcCheckboxRadioSwitch>
-			</div>
-
-			<div class="subsection-header subsection-header__second">
-				{{ t('collectives', 'Allow sharing for') }}
-			</div>
-
-			<div class="permissions-input-share">
-				<NcCheckboxRadioSwitch :checked.sync="sharePermissions"
-					:value="String(memberLevels.LEVEL_ADMIN)"
-					:loading="loading('updateCollectiveSharePermissions_' + String(memberLevels.LEVEL_ADMIN))"
-					name="share_admins"
-					type="radio">
-					{{ t('collectives', 'Admins only') }}
-				</NcCheckboxRadioSwitch>
-				<NcCheckboxRadioSwitch :checked.sync="sharePermissions"
-					:value="String(memberLevels.LEVEL_MODERATOR)"
-					:loading="loading('updateCollectiveSharePermissions_' + String(memberLevels.LEVEL_MODERATOR))"
-					name="share_moderators"
-					type="radio">
-					{{ t('collectives', 'Admins and moderators') }}
-				</NcCheckboxRadioSwitch>
-				<NcCheckboxRadioSwitch :checked.sync="sharePermissions"
-					:value="String(memberLevels.LEVEL_MEMBER)"
-					:loading="loading('updateCollectiveSharePermissions_' + String(memberLevels.LEVEL_MEMBER))"
-					name="share_members"
-					type="radio">
-					{{ t('collectives', 'All members') }}
-				</NcCheckboxRadioSwitch>
-			</div>
+			<NcRadioGroup v-model="sharePermissions" :label="t('collectives', 'Allow sharing for')" class="share-permissions">
+				<NcRadioGroupButton :label="t('collectives', 'Admins only')" :value="String(memberLevels.LEVEL_ADMIN)">
+					<template #icon>
+						<CrownIcon />
+					</template>
+				</NcRadioGroupButton>
+				<NcRadioGroupButton :label="t('collectives', 'Admins and moderators')" :value="String(memberLevels.LEVEL_MODERATOR)">
+					<template #icon>
+						<AccountCogIcon />
+					</template>
+				</NcRadioGroupButton>
+				<NcRadioGroupButton :label="t('collectives', 'All members')" :value="String(memberLevels.LEVEL_MEMBER)">
+					<template #icon>
+						<AccountIcon />
+					</template>
+				</NcRadioGroupButton>
+			</NcRadioGroup>
 		</NcAppSettingsSection>
 
 		<NcAppSettingsSection id="page-settings" :name="t('collectives', 'Page settings')">
-			<div class="subsection-header">
-				{{ t('collectives', 'Default page mode') }}
-			</div>
-
-			<div class="edit-mode">
-				<NcCheckboxRadioSwitch :checked.sync="pageMode"
-					:value="String(pageModes.MODE_VIEW)"
-					:loading="loading('updateCollectivePageMode_' + String(pageModes.MODE_VIEW))"
-					name="page_mode_view"
-					type="radio">
-					{{ t('collectives', 'View') }}
-				</NcCheckboxRadioSwitch>
-				<NcCheckboxRadioSwitch :checked.sync="pageMode"
-					:value="String(pageModes.MODE_EDIT)"
-					:loading="loading('updateCollectivePageMode_' + String(pageModes.MODE_EDIT))"
-					name="page_mode_edit"
-					type="radio">
-					{{ t('collectives', 'Edit') }}
-				</NcCheckboxRadioSwitch>
-			</div>
+			<NcRadioGroup v-model="pageMode" :label="t('collectives', 'Default Page Mode')" class="page-mode">
+				<NcRadioGroupButton :label="t('collectives', 'Preview')" :value="String(pageModes.MODE_PREVIEW)">
+					<template #icon>
+						<EyeIcon />
+					</template>
+				</NcRadioGroupButton>
+				<NcRadioGroupButton :label="t('collectives', 'Edit')" :value="String(pageModes.MODE_EDIT)">
+					<template #icon>
+						<PencilIcon />
+					</template>
+				</NcRadioGroupButton>
+			</NcRadioGroup>
 		</NcAppSettingsSection>
 
 		<NcAppSettingsSection id="danger-zone" :name="t('collectives', 'Danger zone')">
-			<div>
-				<NcButton type="error" :aria-label="t('collectives', 'Delete collective')" @click="trashCollective()">
+			<NcFormGroup
+				:label="t('collectives', 'Delete collective')"
+				hideLabel
+				:description="t('collectives', 'Deleted collectives can be restored from the collectives trash.')">
+				<NcButton
+					variant="error"
+					wide
+					:aria-label="t('collectives', 'Delete collective')"
+					@click="onTrashCollective()">
 					{{ t('collectives', 'Delete collective') }}
 				</NcButton>
-			</div>
+			</NcFormGroup>
 		</NcAppSettingsSection>
 	</NcAppSettingsDialog>
 </template>
 
 <script>
-import { memberLevels, pageModes } from '../../constants.js'
-import { mapActions, mapGetters, mapMutations, mapState } from 'vuex'
 import { showError, showSuccess } from '@nextcloud/dialogs'
-import { NcAppSettingsDialog, NcAppSettingsSection, NcButton, NcCheckboxRadioSwitch, NcTextField } from '@nextcloud/vue'
-import AlertCircleOutlineIcon from 'vue-material-design-icons/AlertCircleOutline.vue'
-import NcEmojiPicker from '@nextcloud/vue/dist/Components/NcEmojiPicker.js'
-import EmoticonOutline from 'vue-material-design-icons/EmoticonOutline.vue'
-import {
-	RENAME_CIRCLE,
-	UPDATE_COLLECTIVE,
-	TRASH_COLLECTIVE,
-	UPDATE_COLLECTIVE_EDIT_PERMISSIONS,
-	UPDATE_COLLECTIVE_SHARE_PERMISSIONS,
-	UPDATE_COLLECTIVE_PAGE_MODE,
-} from '../../store/actions.js'
+import { emit } from '@nextcloud/event-bus'
+import { t } from '@nextcloud/l10n'
+import { mapActions, mapState } from 'pinia'
+import NcAppSettingsDialog from '@nextcloud/vue/components/NcAppSettingsDialog'
+import NcAppSettingsSection from '@nextcloud/vue/components/NcAppSettingsSection'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcEmojiPicker from '@nextcloud/vue/components/NcEmojiPicker'
+import NcFormGroup from '@nextcloud/vue/components/NcFormGroup'
+import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
+import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
+import AccountCogIcon from 'vue-material-design-icons/AccountCogOutline.vue'
+import AccountIcon from 'vue-material-design-icons/AccountOutline.vue'
+import AlertCircleIcon from 'vue-material-design-icons/AlertCircleOutline.vue'
+import CrownIcon from 'vue-material-design-icons/CrownOutline.vue'
+import Emoticon from 'vue-material-design-icons/EmoticonOutline.vue'
+import EyeIcon from 'vue-material-design-icons/EyeOutline.vue'
+import PencilIcon from 'vue-material-design-icons/PencilOutline.vue'
+import { memberLevels, pageModes } from '../../constants.js'
+import { useCirclesStore } from '../../stores/circles.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
 import displayError from '../../util/displayError.js'
 
 export default {
 	name: 'CollectiveSettings',
 
 	components: {
-		AlertCircleOutlineIcon,
+		AccountCogIcon,
+		AccountIcon,
+		AlertCircleIcon,
+		CrownIcon,
 		NcAppSettingsDialog,
 		NcAppSettingsSection,
 		NcButton,
-		NcCheckboxRadioSwitch,
 		NcEmojiPicker,
+		NcFormGroup,
+		NcRadioGroup,
+		NcRadioGroupButton,
 		NcTextField,
-		EmoticonOutline,
+		Emoticon,
+		EyeIcon,
+		PencilIcon,
 	},
 
 	props: {
@@ -186,25 +190,13 @@ export default {
 	},
 
 	computed: {
-		...mapState({
-			pages: (state) => state.pages.pages,
-		}),
-
-		...mapGetters([
-			'collectiveParam',
-			'pageParam',
-			'isCollectiveOwner',
+		...mapState(useRootStore, [
+			'collectiveId',
 			'loading',
 		]),
 
 		emojiTitle() {
 			return this.collective.emoji ? t('collectives', 'Change emoji') : t('collectives', 'Add emoji')
-		},
-
-		getRenameLabel() {
-			return this.isCollectiveOwner(this.collective)
-				? t('collectives', 'Name of the collective')
-				: t('collectives', 'Renaming is limited to owners of the team')
 		},
 
 		isNameTooShort() {
@@ -225,10 +217,11 @@ export default {
 				this.setSettingsCollectiveId(null)
 			}
 		},
+
 		editPermissions(val) {
 			const permission = String(val)
 			this.load('updateCollectiveEditPermissions_' + permission)
-			this.dispatchUpdateCollectiveEditPermissions({ id: this.collective.id, level: parseInt(permission) }).then(() => {
+			this.updateCollectiveEditPermissions({ id: this.collective.id, level: parseInt(permission) }).then(() => {
 				this.done('updateCollectiveEditPermissions_' + permission)
 				showSuccess(t('collectives', 'Editing permissions updated'))
 			}).catch((error) => {
@@ -238,10 +231,11 @@ export default {
 				throw error
 			})
 		},
+
 		sharePermissions(val) {
 			const permission = String(val)
 			this.load('updateCollectiveSharePermissions_' + permission)
-			this.dispatchUpdateCollectiveSharePermissions({ id: this.collective.id, level: parseInt(permission) }).then(() => {
+			this.updateCollectiveSharePermissions({ id: this.collective.id, level: parseInt(permission) }).then(() => {
 				showSuccess(t('collectives', 'Sharing permissions updated'))
 				this.done('updateCollectiveSharePermissions_' + permission)
 			}).catch((error) => {
@@ -251,10 +245,11 @@ export default {
 				throw error
 			})
 		},
+
 		pageMode(val) {
 			const pageMode = String(val)
 			this.load('updateCollectivePageMode_' + pageMode)
-			this.dispatchUpdateCollectivePageMode({ id: this.collective.id, mode: parseInt(pageMode) }).then(() => {
+			this.updateCollectivePageMode({ id: this.collective.id, mode: parseInt(pageMode) }).then(() => {
 				this.done('updateCollectivePageMode_' + pageMode)
 				showSuccess(t('collectives', 'Default page mode updated'))
 			}).catch((error) => {
@@ -267,20 +262,23 @@ export default {
 	},
 
 	methods: {
-		...mapMutations([
+		t,
+
+		...mapActions(useRootStore, [
 			'load',
 			'done',
-			'setSettingsCollectiveId',
 		]),
 
-		...mapActions({
-			dispatchRenameCircle: RENAME_CIRCLE,
-			dispatchUpdateCollective: UPDATE_COLLECTIVE,
-			dispatchTrashCollective: TRASH_COLLECTIVE,
-			dispatchUpdateCollectiveEditPermissions: UPDATE_COLLECTIVE_EDIT_PERMISSIONS,
-			dispatchUpdateCollectiveSharePermissions: UPDATE_COLLECTIVE_SHARE_PERMISSIONS,
-			dispatchUpdateCollectivePageMode: UPDATE_COLLECTIVE_PAGE_MODE,
-		}),
+		...mapActions(useCirclesStore, ['renameCircle']),
+		...mapActions(usePagesStore, ['clearPagesForCollective']),
+		...mapActions(useCollectivesStore, [
+			'setSettingsCollectiveId',
+			'trashCollective',
+			'updateCollective',
+			'updateCollectiveEditPermissions',
+			'updateCollectiveSharePermissions',
+			'updateCollectivePageMode',
+		]),
 
 		/**
 		 * Update the emoji of a collective
@@ -288,11 +286,10 @@ export default {
 		 * @param {string} emoji Emoji
 		 */
 		updateEmoji(emoji) {
-			console.debug('updateEmoji', emoji)
 			this.load('updateCollectiveEmoji')
 			const collective = { id: this.collective.id }
 			collective.emoji = emoji
-			this.dispatchUpdateCollective(collective).then(() => {
+			this.updateCollective(collective).then(() => {
 				showSuccess(t('collectives', 'Emoji updated'))
 				this.done('updateCollectiveEmoji')
 			}).catch((error) => {
@@ -315,15 +312,20 @@ export default {
 				return
 			}
 
+			// Prevent duplicate requests by different events (e.g. blur + submit)
+			if (this.loading('renameCollective')) {
+				return
+			}
+
 			this.load('renameCollective')
 
 			// If currentCollective is renamed, we need to update the router path later
-			const redirect = this.collectiveParam === this.collective.name
+			const redirect = this.collectiveId === this.collective.id
 
 			// Wait for team rename (also patches store with updated collective and pages)
 			const collective = { ...this.collective }
 			collective.name = this.newCollectiveName
-			await this.dispatchRenameCircle(collective).then(() => {
+			await this.renameCircle(collective).then(() => {
 				showSuccess('Collective renamed')
 			}).catch((error) => {
 				showError(t('collectives', 'Could not rename the collective'))
@@ -336,10 +338,9 @@ export default {
 
 			// Push new router path if currentCollective was renamed
 			if (redirect) {
-				this.$router.push(
-					'/' + encodeURIComponent(this.newCollectiveName)
-					+ (this.pageParam ? '/' + this.pageParam : ''),
-				)
+				// Clear pages so a reload can't render a page with a stale pre-rename collectivePath
+				this.clearPagesForCollective(this.collective)
+				this.$router.go(0)
 			}
 
 			this.done('renameCollective')
@@ -348,55 +349,44 @@ export default {
 		/**
 		 * Trash a collective with the given name
 		 */
-		trashCollective() {
-			if (this.collectiveParam === this.collective.name) {
-				this.$router.push('/')
+		async onTrashCollective() {
+			try {
+				await this.trashCollective(this.collective)
+				emit('collectives:navigation:collective-trashed')
+				if (this.collectiveId === this.collective.id) {
+					await this.$router.push('/')
+					emit('toggle-navigation', { open: true })
+				}
+			} catch (e) {
+				displayError('Could not move the collective to trash')(e)
+			} finally {
+				this.setSettingsCollectiveId(null)
 			}
-			this.dispatchTrashCollective(this.collective)
-				.catch(displayError('Could not move the collective to trash'))
-				.finally(this.setSettingsCollectiveId(null))
 		},
 	},
 }
 </script>
 
 <style lang="scss" scoped>
-.button-emoji {
-	font-size: 20px;
+button.button-emoji {
+	padding: 0;
+	font-size: 1.2em;
 }
 
-.collective-name {
+.collective-name-and-emoji {
 	display: flex;
-
-	.collective-name-input {
-		display: grid;
-		align-items: center;
-	}
+	flex-direction: row;
+	align-items: center;
 }
 
 .collective-name-error-placeholder {
-	min-height: 24px;
+	min-height: 22px;
 }
 
 .collective-name-error {
 	display: flex;
+	gap: var(--default-grid-baseline);
 	// Emoji button + input field padding
-	padding-left: calc(57px + 12px);
-
-	&-label {
-		padding-left: 4px;
-	}
-}
-
-.subsection-header {
-	font-weight: bold;
-	margin-bottom: 12px;
-	&__second {
-		margin-top: 12px;
-	}
-}
-
-.section-description {
-	margin-bottom: 12px;
+	padding-inline-start: calc(var(--default-clickable-area) + var(--input-padding-start));
 }
 </style>

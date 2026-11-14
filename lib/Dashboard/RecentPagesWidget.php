@@ -2,6 +2,11 @@
 
 namespace OCA\Collectives\Dashboard;
 
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 use OCA\Collectives\Service\RecentPagesService;
 use OCP\Dashboard\IIconWidget;
 use OCP\Dashboard\IReloadableWidget;
@@ -14,10 +19,12 @@ use OCP\IUserSession;
 class RecentPagesWidget implements IReloadableWidget, IIconWidget {
 	public const REFRESH_INTERVAL_IN_SECS = 33;
 
-	public function __construct(protected IL10N $l10n,
+	public function __construct(
+		protected IL10N $l10n,
 		protected IURLGenerator $urlGenerator,
 		protected IUserSession $userSession,
-		protected RecentPagesService $recentPagesService) {
+		protected RecentPagesService $recentPagesService,
+	) {
 	}
 
 	public function getItemsV2(string $userId, ?string $since = null, int $limit = 7): WidgetItems {
@@ -30,8 +37,8 @@ class RecentPagesWidget implements IReloadableWidget, IIconWidget {
 		$items = [];
 		foreach ($recentPages as $recentPage) {
 			$subtitle = $recentPage->getPagePath()
-				? $recentPage->getCollectiveName() . ': ' . $recentPage->getPagePath()
-				: $recentPage->getCollectiveName();
+				? $recentPage->getCollectiveNameWithEmoji() . ' - ' . $recentPage->getPagePath()
+				: $recentPage->getCollectiveNameWithEmoji();
 			$items[] = new WidgetItem(
 				$recentPage->getTitle(),
 				$subtitle,
@@ -73,11 +80,11 @@ class RecentPagesWidget implements IReloadableWidget, IIconWidget {
 	}
 
 	public function getIconUrl(): string {
-		return $this->urlGenerator->imagePath('collectives', 'collectives.svg');
+		return $this->urlGenerator->imagePath('collectives', 'collectives-dark.svg');
 	}
 
 	public function getUrl(): ?string {
-		return $this->urlGenerator->linkToRoute('collectives.collective.index');
+		return $this->urlGenerator->linkToRoute('collectives.start.index');
 	}
 
 	public function load(): void {

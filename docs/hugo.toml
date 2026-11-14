@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+baseURL = 'https://collectives.cloud/'
+languageCode = 'en-us'
+title = 'Collectives'
+canonifyurls = true
+publishdir = "build/pages"
+
+[Author]
+	name = "Nextcloud Collectives Team"
+	github = "nextcloud"

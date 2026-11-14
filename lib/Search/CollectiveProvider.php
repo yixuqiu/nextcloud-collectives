@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Search;
 
 use OCA\Collectives\Service\CollectiveHelper;
-use OCA\Collectives\Service\CollectiveService;
 use OCA\Collectives\Service\MissingDependencyException;
 use OCA\Collectives\Service\NotFoundException;
 use OCA\Collectives\Service\NotPermittedException;
@@ -19,11 +23,12 @@ use OCP\Search\SearchResult;
 use OCP\Search\SearchResultEntry;
 
 class CollectiveProvider implements IProvider {
-	public function __construct(private IL10N $l10n,
-		private IURLGenerator $urlGenerator,
-		private CollectiveHelper $collectiveHelper,
-		private CollectiveService $collectiveService,
-		private IAppManager $appManager) {
+	public function __construct(
+		private readonly IL10N $l10n,
+		private readonly IURLGenerator $urlGenerator,
+		private readonly CollectiveHelper $collectiveHelper,
+		private readonly IAppManager $appManager,
+	) {
 	}
 
 	public function getId(): string {
@@ -61,7 +66,7 @@ class CollectiveProvider implements IProvider {
 			}
 			$collectiveSearchResults[] = new SearchResultEntry(
 				'',
-				$this->collectiveService->getCollectiveNameWithEmoji($collective),
+				CollectiveHelper::getCollectiveNameWithEmoji($collective),
 				'',
 				$this->urlGenerator->linkToRouteAbsolute('collectives.start.index') . rawurlencode($collective->getName()),
 				'icon-collectives'

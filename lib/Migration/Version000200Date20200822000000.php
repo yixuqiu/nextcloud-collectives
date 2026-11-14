@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Migration;
 
 use Closure;
@@ -34,6 +39,23 @@ class Version000200Date20200822000000 extends SimpleMigrationStep {
 			]);
 			$table->addColumn('trash_timestamp', Types::INTEGER, [
 				'notnull' => false,
+			]);
+			$table->addColumn('subpage_order', Types::TEXT, [
+				'notnull' => false,
+				'length' => null,
+			]);
+			$table->addColumn('full_width', Types::BOOLEAN, [
+				'notnull' => false,
+				'default' => false,
+			]);
+			$table->addColumn('slug', Types::STRING, [
+				'notnull' => false,
+				'default' => false,
+				'length' => 255,
+			]);
+			$table->addColumn('tags', Types::TEXT, [
+				'notnull' => false,
+				'length' => null,
 			]);
 
 			$table->setPrimaryKey(['id']);

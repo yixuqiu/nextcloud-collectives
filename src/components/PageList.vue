@@ -1,151 +1,264 @@
+<!--
+  - SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<NcAppContentList :show-details="showing('details')">
-		<div class="page-list-headerbar">
-			<NcTextField name="pageFilter"
-				:label="t('collectives', 'Search pages')"
-				:value.sync="filterString"
-				class="page-filter"
-				:placeholder="t('collectives', 'Search pages ...')" />
-			<NcActions class="toggle toggle-push-to-right">
-				<NcActionButton class="toggle-button"
-					:aria-label="labels.showTemplates"
-					@click="toggleTemplates()">
-					<template #icon>
-						<PagesTemplateIcon :size="12" :fill-color="showTemplates ? 'currentColor' : 'var(--color-text-maxcontrast)'" />
-					</template>
-					{{ labels.showTemplates }}
-				</NcActionButton>
-			</NcActions>
-			<NcActions class="toggle"
-				:aria-label="t('collectives', 'Sort order')">
+	<!-- Headerbar with filter field, add-page button and sort selector -->
+	<div class="page-list-headerbar">
+		<!-- Tag selection popover -->
+		<NcPopover
+			popupRole="listbox"
+			class="page-filter"
+			popoverBaseClass="page-filter-popover"
+			:shown="showTagSelection"
+			:triggers="[]"
+			placement="bottom-start"
+			noFocusTrap>
+			<template #trigger="{ attrs }">
+				<NcTextField
+					ref="pageFilter"
+					v-model="filterString"
+					name="pageFilter"
+					v-bind="attrs"
+					:label="t('collectives', 'Search pages')"
+					:placeholder="t('collectives', 'Search pages…')"
+					trailingButtonIcon="close"
+					:showTrailingButton="isFilteredView"
+					@trailingButtonClick="clearFilterString"
+					@keydown.esc.prevent.stop="stopTagSelection"
+					@keydown.tab="onPageFilterTabKey" />
+			</template>
+			<template #default>
+				<div
+					class="page-filter-tag-select"
+					@keydown.esc.prevent.stop="stopTagSelection">
+					<ul class="page-tags select-popover">
+						<PageTag
+							v-for="tag in filterStringTags"
+							ref="filterStringTag"
+							:key="tag.id"
+							:tag
+							@select="onSelectFilterTag(tag.id)" />
+					</ul>
+				</div>
+			</template>
+		</NcPopover>
+
+		<NcActions
+			class="toggle"
+			:aria-label="t('collectives', 'Page list options')">
+			<template #icon>
+				<FilterVariantIcon :size="20" />
+			</template>
+			<NcActionButton
+				class="toggle-button"
+				:class="{ selected: sortedBy('byOrder') }"
+				closeAfterClick
+				@click="sortPagesAndScroll('byOrder')">
 				<template #icon>
-					<SortAscendingIcon v-if="sortedBy('byOrder')" :size="16" />
-					<SortAlphabeticalAscendingIcon v-else-if="sortedBy('byTitle')" :size="16" />
-					<SortClockAscendingOutlineIcon v-else :size="16" />
+					<SortAscendingIcon :size="20" />
 				</template>
-				<NcActionButton class="toggle-button"
-					:class="{selected: sortedBy('byOrder')}"
-					:close-after-click="true"
+				{{ t('collectives', 'Sort by custom order') }}
+			</NcActionButton>
+			<NcActionButton
+				class="toggle-button"
+				:class="{ selected: sortedBy('byTimeAsc') || sortedBy('byTimeDesc') }"
+				closeAfterClick
+				@click="sortedBy('byTimeAsc') ? sortPagesAndScroll('byTimeDesc') : sortPagesAndScroll('byTimeAsc')">
+				<template #icon>
+					<SortClockAscendingIcon v-if="!sortedBy('byTimeAsc')" :size="20" />
+					<SortClockDescendingIcon v-else :size="20" />
+				</template>
+				{{ sortedBy('byTimeAsc') ? t('collectives', 'Sort least recently changed first') : t('collectives', 'Sort recently changed first') }}
+			</NcActionButton>
+			<NcActionButton
+				class="toggle-button"
+				:class="{ selected: sortedBy('byTitleAsc') || sortedBy('byTitleDesc') }"
+				closeAfterClick
+				@click="sortedBy('byTitleAsc') ? sortPagesAndScroll('byTitleDesc') : sortPagesAndScroll('byTitleAsc')">
+				<template #icon>
+					<SortAlphabeticalAscendingIcon v-if="!sortedBy('byTitleAsc')" :size="20" />
+					<SortAlphabeticalDescendingIcon v-else :size="20" />
+				</template>
+				{{ sortedBy('byTitleAsc') ? t('collectives', 'Sort descending by title') : t('collectives', 'Sort ascending by title') }}
+			</NcActionButton>
+			<template v-if="!isFilteredView">
+				<NcActionSeparator />
+				<NcActionButton
+					closeAfterClick
+					@click="collapseAllAndScroll">
+					<template #icon>
+						<UnfoldLessHorizontalIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Collapse all pages') }}
+				</NcActionButton>
+			</template>
+		</NcActions>
+
+		<NcButton
+			v-if="currentCollectiveCanEdit"
+			:aria-label="t('collectives', 'Add a page')"
+			variant="tertiary"
+			class="toggle"
+			:disabled="!networkOnline"
+			@click="onNewPage">
+			<template #icon>
+				<PlusIcon :size="20" />
+			</template>
+		</NcButton>
+	</div>
+
+	<!-- Filter tags -->
+	<div v-if="filterTags.length > 0" class="page-filter-tags">
+		<ul class="page-tags">
+			<PageTag
+				v-for="tag in filterTags"
+				:key="tag.id"
+				:tag
+				canRemove
+				@remove="removeFilterTagId(tag.id)" />
+		</ul>
+	</div>
+
+	<!-- Home button (landing page) -->
+	<PageListHomeButton v-if="showHomeButton" />
+
+	<!-- Loading -->
+	<div v-if="!currentCollective || !rootPage || loading('pagelist')" class="page-list">
+		<SkeletonLoading type="items" :count="3" />
+	</div>
+
+	<!-- Page list -->
+	<div v-else class="page-list">
+		<!-- Sort order container (optional) -->
+		<div v-if="!sortedBy('byOrder')" class="sort-order-container">
+			<div class="sort-order-chip">
+				<span class="sort-order-chip-text">
+					{{ sortedByString }}
+				</span>
+				<NcButton
+					:aria-label="t('collectives', 'Switch back to default sort order')"
+					variant="tertiary"
+					class="sort-order-chip-button"
 					@click="sortPagesAndScroll('byOrder')">
 					<template #icon>
-						<SortAscendingIcon :size="20" />
+						<CloseIcon :size="20" />
 					</template>
-					{{ t('collectives', 'Sort by custom order') }}
-				</NcActionButton>
-				<NcActionButton class="toggle-button"
-					:class="{selected: sortedBy('byTimestamp')}"
-					:close-after-click="true"
-					@click="sortPagesAndScroll('byTimestamp')">
-					<template #icon>
-						<SortClockAscendingOutlineIcon :size="20" />
-					</template>
-					{{ t('collectives', 'Sort recently changed first') }}
-				</NcActionButton>
-				<NcActionButton class="toggle-button"
-					:class="{selected: sortedBy('byTitle')}"
-					:close-after-click="true"
-					@click="sortPagesAndScroll('byTitle')">
-					<template #icon>
-						<SortAlphabeticalAscendingIcon :size="20" />
-					</template>
-					{{ t('collectives', 'Sort by title') }}
-				</NcActionButton>
-			</NcActions>
+				</NcButton>
+			</div>
 		</div>
-		<div v-if="!currentCollective || !rootPage || loading('collective')" class="page-list">
-			<SkeletonLoading type="items" :count="3" />
-		</div>
-		<div v-else class="page-list">
-			<Item key="Readme"
-				:to="currentCollectivePath"
-				:page-id="rootPage.id"
-				:parent-id="0"
-				:title="currentCollectiveIsPageShare ? rootPage.title : currentCollective.name"
-				:timestamp="rootPage.timestamp"
-				:last-user-id="rootPage.lastUserId"
-				:last-user-display-name="rootPage.lastUserDisplayName"
-				:emoji="currentCollectiveIsPageShare ? rootPage.emoji : currentCollective.emoji"
-				:level="0"
-				:can-edit="currentCollectiveCanEdit"
-				:is-root-page="true"
-				:is-landing-page="!currentCollectiveIsPageShare"
-				:has-template="hasTemplate"
-				:filtered-view="false"
-				class="page-list-root-page"
-				@click.native="show('details')" />
-			<Draggable v-if="subpages || keptSortable(currentPage.id)"
-				:list="subpages"
-				:parent-id="rootPage.id"
-				:disable-sorting="isFilteredview">
-				<template #header>
-					<div v-if="!sortedBy('byOrder')" class="sort-order-container">
-						<span class="sort-order-chip">
-							{{ sortedBy('byTitle') ? t('collectives', 'Sorted by title') : t('collectives', 'Sorted by recently changed') }}
-							<NcButton :aria-label="t('collectives', 'Switch back to default sort order')"
-								type="tertiary"
-								class="sort-oder-chip-button"
-								@click="sortPagesAndScroll('byOrder')">
-								<template #icon>
-									<CloseIcon :size="20" />
-								</template>
-							</NcButton>
-						</span>
-					</div>
-				</template>
-				<SubpageList v-if="templateView"
-					:key="templateView.id"
-					:page="templateView"
+
+		<!-- Favorites -->
+		<PageFavorites v-if="showFavorites" :networkOnline />
+
+		<!-- Filtered view page list -->
+		<div v-if="isFilteredView" ref="pageListFiltered" class="page-list-filtered">
+			<NcAppNavigationCaption v-if="filteredPages.length > 0" :name="t('Collectives', 'Results in title or tags')" />
+			<RecycleScroller
+				v-if="filteredPages.length > 0"
+				v-slot="{ item }"
+				ref="filteredScroller"
+				:items="filteredPages"
+				:itemSize
+				keyField="id">
+				<SubpageList
+					:key="item.id"
+					:data-page-id="item.id"
+					:page="item"
 					:level="1"
-					:filtered-view="isFilteredview"
-					:is-template="true" />
-				<div v-if="isFilteredview">
-					<RecycleScroller v-slot="{item}"
-						class="scroller"
-						:items="filteredPages"
-						:item-size="44"
-						key-field="id">
-						<SubpageList :key="item.id"
-							:data-page-id="item.id"
-							:page="item"
-							:level="1"
-							:filtered-view="true"
-							class="page-list-drag-item" />
-					</RecycleScroller>
-				</div>
-				<div v-if="!isFilteredview">
-					<SubpageList v-for="page in subpages"
-						:key="page.id"
-						:data-page-id="page.id"
-						:page="page"
-						:level="1"
-						:filtered-view="false"
-						class="page-list-drag-item" />
-				</div>
-			</Draggable>
+					filteredView
+					:networkOnline
+					class="page-list-drag-item" />
+			</RecycleScroller>
+			<NcAppNavigationCaption v-if="loadingContentFilteredPages || contentFilteredPages.length > 0" :name="t('Collectives', 'Results in content')" />
+			<RecycleScroller
+				v-if="!loadingContentFilteredPages && contentFilteredPages.length > 0"
+				v-slot="{ item }"
+				ref="contentFilteredScroller"
+				:items="contentFilteredPages"
+				:itemSize
+				keyField="id">
+				<SubpageList
+					:key="item.id"
+					:data-page-id="item.id"
+					:page="item"
+					:level="1"
+					filteredView
+					:networkOnline
+					class="page-list-drag-item" />
+			</RecycleScroller>
+			<div v-if="loadingContentFilteredPages" class="scrollload">
+				<SkeletonLoading type="items" :count="3" />
+			</div>
 		</div>
-		<PageTrash v-if="displayTrash" />
-	</NcAppContentList>
+
+		<!-- Unfiltered view page list -->
+		<DraggableElement
+			v-else
+			class="page-list-dragarea"
+			:list="subpages"
+			:parentId="rootPage.id"
+			:disableSorting="isFilteredView">
+			<SubpageList
+				v-for="page in subpages"
+				:key="page.id"
+				:data-page-id="page.id"
+				:page
+				:level="1"
+				:networkOnline
+				class="page-list-drag-item" />
+		</DraggableElement>
+	</div>
+
+	<!-- Page trash -->
+	<PageTrash v-if="displayTrash" :networkOnline />
+
+	<NewPageDialog v-if="newPageParentId" />
 </template>
 
 <script>
-
-import { mapActions, mapGetters, mapMutations } from 'vuex'
-import { NcActionButton, NcActions, NcAppContentList, NcButton, NcTextField } from '@nextcloud/vue'
 import { showError } from '@nextcloud/dialogs'
+import { t } from '@nextcloud/l10n'
+import { useElementSize } from '@vueuse/core'
+import debounce from 'debounce'
+import { mapActions, mapState } from 'pinia'
+import { ref } from 'vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import NcActionButton from '@nextcloud/vue/components/NcActionButton'
+import NcActions from '@nextcloud/vue/components/NcActions'
+import NcActionSeparator from '@nextcloud/vue/components/NcActionSeparator'
+import NcAppNavigationCaption from '@nextcloud/vue/components/NcAppNavigationCaption'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcPopover from '@nextcloud/vue/components/NcPopover'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
 import CloseIcon from 'vue-material-design-icons/Close.vue'
-import Draggable from './PageList/Draggable.vue'
-import SubpageList from './PageList/SubpageList.vue'
-import Item from './PageList/Item.vue'
-import PageTrash from './PageList/PageTrash.vue'
+import FilterVariantIcon from 'vue-material-design-icons/FilterVariant.vue'
+import PlusIcon from 'vue-material-design-icons/Plus.vue'
 import SortAlphabeticalAscendingIcon from 'vue-material-design-icons/SortAlphabeticalAscending.vue'
+import SortAlphabeticalDescendingIcon from 'vue-material-design-icons/SortAlphabeticalDescending.vue'
 import SortAscendingIcon from 'vue-material-design-icons/SortAscending.vue'
-import SortClockAscendingOutlineIcon from 'vue-material-design-icons/SortClockAscendingOutline.vue'
-import PagesTemplateIcon from './Icon/PagesTemplateIcon.vue'
-import { SET_COLLECTIVE_USER_SETTING_PAGE_ORDER } from '../store/actions.js'
+import SortClockAscendingIcon from 'vue-material-design-icons/SortClockAscendingOutline.vue'
+import SortClockDescendingIcon from 'vue-material-design-icons/SortClockDescendingOutline.vue'
+import UnfoldLessHorizontalIcon from 'vue-material-design-icons/UnfoldLessHorizontal.vue'
+import DraggableElement from './PageList/DraggableElement.vue'
+import NewPageDialog from './PageList/NewPageDialog.vue'
+import PageFavorites from './PageList/PageFavorites.vue'
+import PageListHomeButton from './PageList/PageListHomeButton.vue'
+import PageTrash from './PageList/PageTrash.vue'
+import SubpageList from './PageList/SubpageList.vue'
+import PageTag from './PageTag.vue'
+import SkeletonLoading from './SkeletonLoading.vue'
+import { popCtrlF, pushCtrlF } from '../composables/useKeymap.ts'
+import { useNetworkState } from '../composables/useNetworkState.js'
+import pageMixin from '../mixins/pageMixin.js'
+import { useCollectivesStore } from '../stores/collectives.js'
+import { usePagesStore } from '../stores/pages.js'
+import { useRootStore } from '../stores/root.js'
+import { useSearchStore } from '../stores/search.js'
+import { useTagsStore } from '../stores/tags.js'
 import { scrollToPage } from '../util/scrollToElement.js'
 import { pageOrders } from '../util/sortOrders.js'
-import SkeletonLoading from './SkeletonLoading.vue'
-import { RecycleScroller } from 'vue-virtual-scroller'
 
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
@@ -153,57 +266,107 @@ export default {
 	name: 'PageList',
 
 	components: {
-		SkeletonLoading,
-		NcActions,
 		NcActionButton,
-		NcAppContentList,
+		NcActions,
+		NcActionSeparator,
+		NcAppNavigationCaption,
 		NcButton,
+		NcPopover,
 		NcTextField,
+		NewPageDialog,
+		SkeletonLoading,
 		CloseIcon,
-		Draggable,
-		Item,
-		PagesTemplateIcon,
+		DraggableElement,
+		PageFavorites,
+		PageListHomeButton,
+		PageTag,
 		PageTrash,
+		PlusIcon,
+		RecycleScroller,
 		SubpageList,
 		SortAlphabeticalAscendingIcon,
+		SortAlphabeticalDescendingIcon,
 		SortAscendingIcon,
-		SortClockAscendingOutlineIcon,
-		RecycleScroller,
+		SortClockAscendingIcon,
+		SortClockDescendingIcon,
+		FilterVariantIcon,
+		UnfoldLessHorizontalIcon,
+	},
+
+	mixins: [
+		pageMixin,
+	],
+
+	setup() {
+		const { networkOnline } = useNetworkState()
+		const pageListFiltered = ref()
+		const { height: pageListFilteredHeight } = useElementSize(pageListFiltered)
+		return { networkOnline, pageListFiltered, pageListFilteredHeight }
 	},
 
 	data() {
 		return {
 			filterString: '',
+			contentFilteredPages: [],
+			loadingContentFilteredPages: false,
+			getContentFilteredPagesDebounced: debounce(this.getContentFilteredPages, 700),
+			showTagSelection: false,
 		}
 	},
 
 	computed: {
-		...mapGetters([
-			'currentCollectiveCanEdit',
-			'rootPage',
-			'templatePage',
+		...mapState(useRootStore, ['isPublic', 'loading']),
+		...mapState(useCollectivesStore, [
 			'currentCollective',
+			'currentCollectiveCanEdit',
 			'currentCollectiveIsPageShare',
-			'currentCollectivePath',
-			'currentPage',
-			'isPublic',
-			'keptSortable',
-			'loading',
-			'visibleSubpages',
-			'sortBy',
-			'showing',
-			'showTemplates',
-			'allPagesSorted',
 		]),
 
-		allPagesSortedCached() {
-			return this.allPagesSorted(this.rootPage.id)
+		...mapState(useTagsStore, ['sortedTags', 'filterTags']),
+		...mapState(usePagesStore, [
+			'rootPage',
+			'currentPageId',
+			'newPageParentId',
+			'hasFavoritePages',
+			'visibleSubpages',
+			'pages',
+			'sortByOrder',
+			'sortPages',
+		]),
+
+		// Filter by page title search string and page tags and exclude root page
+		filteredPages() {
+			const found = this.pages
+				.filter((p) => p.title.toLowerCase().includes(this.filterString.toLowerCase()))
+				.filter((p) => this.filterTags.every((t) => p.tags.includes(t.id)))
+				.filter((p) => p.parentId !== 0)
+			return this.sortPages(found)
 		},
 
-		filteredPages() {
-			return this.allPagesSortedCached.filter(p => {
-				return p.title.toLowerCase().includes(this.filterString.toLowerCase())
-			})
+		filterStringTagPart() {
+			return this.filterString.toLowerCase().split(' ').pop()
+		},
+
+		filterStringTags() {
+			if (!this.filterStringTagPart) {
+				return []
+			}
+			return this.sortedTags
+				// Ignore already selected tags
+				.filter((t) => !this.filterTags.some((ft) => ft.id === t.id))
+				.filter((t) => t.name.toLowerCase().includes(this.filterStringTagPart))
+				.toSorted((t1, t2) => {
+					if (t1.name.toLowerCase().startsWith(this.filterStringTagPart)) {
+						return -1
+					} else if (t2.name.toLowerCase().startsWith(this.filterStringTagPart)) {
+						return 1
+					} else if (t1.name.toLowerCase().split(' ').some((str) => str.startsWith(this.filterStringTagPart))) {
+						return -1
+					} else if (t2.name.toLowerCase().split(' ').some((str) => str.startsWith(this.filterStringTagPart))) {
+						return 1
+					}
+					return 0
+				})
 		},
 
 		subpages() {
@@ -214,50 +377,138 @@ export default {
 			}
 		},
 
-		hasTemplate() {
-			return !!this.templatePage(this.rootPage ? this.rootPage.id : 0)
-		},
-
-		labels() {
-			return {
-				showTemplates: this.showTemplates ? t('collectives', 'Hide templates') : t('collectives', 'Show templates'),
-			}
-		},
-
-		templateView() {
-			if (this.showTemplates && this.rootPage) {
-				return this.templatePage(this.rootPage.id)
-			} else {
-				return null
-			}
-		},
-
 		sortedBy() {
-			return (sortOrder) => this.sortBy === sortOrder
+			return (sortOrder) => this.sortByOrder === sortOrder
 		},
 
-		isFilteredview() {
-			return this.filterString !== ''
+		sortedByString() {
+			if (this.sortedBy('byTitleAsc')) {
+				return t('collectives', 'Sorted ascending by title')
+			} else if (this.sortedBy('byTitleDesc')) {
+				return t('collectives', 'Sorted descending by title')
+			} else if (this.sortedBy('byTimeAsc')) {
+				return t('collectives', 'Sorted by recently changed')
+			} else {
+				return t('collectives', 'Sorted by least recently changed')
+			}
+		},
+
+		showHomeButton() {
+			// No landing page in page shares
+			if (this.currentCollectiveIsPageShare
+				|| this.filterString !== '') {
+				return false
+			}
+			// In filtered view, show the landing page only if it matches the tag filter.
+			return this.filterTags.every((t) => this.rootPage?.tags.includes(t.id))
+		},
+
+		showFavorites() {
+			return !this.isFilteredView && this.hasFavoritePages
+		},
+
+		isFilteredView() {
+			return this.filterString !== '' || this.filterTags.length > 0
+		},
+
+		defaultClickableArea() {
+			return parseInt(window.getComputedStyle(document.body).getPropertyValue('--default-clickable-area'))
+		},
+
+		scrollerMaxHeights() {
+			const navigationCaptionHeight = this.defaultClickableArea + 4
+			const navigationCaptionMargin = this.defaultClickableArea / 2
+			const fullScrollerHeight = Math.floor(this.pageListFilteredHeight - navigationCaptionHeight)
+			const halfScrollerHeight = Math.floor((this.pageListFilteredHeight - navigationCaptionHeight * 2) / 2) - navigationCaptionMargin
+			// Split half/half during loading
+			if (this.loadingContentFilteredPages) {
+				return [halfScrollerHeight, halfScrollerHeight]
+			}
+
+			// If only one filter has items, give all height to it
+			if (!this.filteredPages.length) {
+				return [0, fullScrollerHeight]
+			}
+
+			// If only one filter has items, give all height to it
+			if (!this.contentFilteredPages.length) {
+				return [fullScrollerHeight, 0]
+			}
+
+			const filteredPagesFullHeight = this.filteredPages.length * this.itemSize
+			const contentFilteredPagesFullHeight = this.contentFilteredPages.length * this.itemSize
+			// If both filters grow above available space, split half/half
+			if (filteredPagesFullHeight > halfScrollerHeight && contentFilteredPagesFullHeight > halfScrollerHeight) {
+				return [halfScrollerHeight, halfScrollerHeight]
+			}
+
+			// If one filter doesn't need half of the space, give the rest to the other
+			return filteredPagesFullHeight < halfScrollerHeight
+				? [filteredPagesFullHeight, halfScrollerHeight * 2 - filteredPagesFullHeight]
+				: [halfScrollerHeight * 2 - contentFilteredPagesFullHeight, contentFilteredPagesFullHeight]
+		},
+
+		itemSize() {
+			return this.defaultClickableArea > 40
+				? this.defaultClickableArea
+				: this.defaultClickableArea + 4
 		},
 
 		displayTrash() {
 			return this.currentCollectiveCanEdit
 				&& !this.currentCollectiveIsPageShare
-				&& ('files_trashbin' in this.OC.appswebroots)
+				&& ('files_trashbin' in window.OC.appswebroots)
 				&& !this.loading('collectives')
 		},
 	},
 
-	methods: {
-		...mapMutations([
-			'setPageOrder',
-			'show',
-			'toggleTemplates',
-		]),
+	watch: {
+		'currentCollective.id': function() {
+			this.contentFilteredPages = []
+			this.getContentFilteredPagesDebounced()
+		},
 
-		...mapActions({
-			dispatchSetUserPageOrder: SET_COLLECTIVE_USER_SETTING_PAGE_ORDER,
-		}),
+		filterString() {
+			this.getContentFilteredPagesDebounced()
+			this.setSearchQuery(this.filterString)
+		},
+
+		contentFilteredPages() {
+			this.updateScrollerHeights()
+		},
+
+		pageListFilteredHeight() {
+			this.updateScrollerHeights()
+		},
+
+		filterStringTags(val) {
+			this.showTagSelection = val && val.length > 0
+		},
+	},
+
+	mounted() {
+		pushCtrlF(this.$refs.pageFilter)
+	},
+
+	beforeUnmount() {
+		popCtrlF(this.$refs.pageFilter)
+	},
+
+	methods: {
+		t,
+
+		...mapActions(useTagsStore, ['addFilterTagId', 'removeFilterTagId']),
+		...mapActions(useCollectivesStore, ['setCollectiveUserSettingPageOrder']),
+		...mapActions(usePagesStore, ['collapseAll', 'contentSearch', 'setPageOrder']),
+		...mapActions(useSearchStore, ['setSearchQuery']),
+
+		clearFilterString() {
+			this.filterString = ''
+		},
+
+		onNewPage() {
+			this.addPage(this.rootPage.id)
+		},
 
 		/**
 		 * Change page sort order and scroll to current page
@@ -267,54 +518,121 @@ export default {
 		sortPagesAndScroll(order) {
 			this.setPageOrder(order)
 			if (!this.isPublic) {
-				this.dispatchSetUserPageOrder({ id: this.currentCollective.id, pageOrder: pageOrders[order] })
+				this.setCollectiveUserSettingPageOrder({ id: this.currentCollective.id, pageOrder: pageOrders[order] })
 					.catch((error) => {
 						console.error(error)
 						showError(t('collectives', 'Could not save page order for collective'))
 					})
 			}
 			this.$nextTick(() => {
-				scrollToPage(this.currentPage.id)
+				scrollToPage(this.currentPageId)
 			})
+		},
+
+		collapseAllAndScroll() {
+			this.collapseAll()
+			this.$nextTick(() => {
+				scrollToPage(this.currentPageId)
+			})
+		},
+
+		updateScrollerHeights() {
+			const [filteredPagesScrollerMaxHeight, contentFilteredPagesScrollerMaxHeight] = this.scrollerMaxHeights
+			this.$nextTick(() => {
+				if (this.$refs.filteredScroller) {
+					this.$refs.filteredScroller.$el.style.maxHeight = filteredPagesScrollerMaxHeight + 'px'
+				}
+				if (this.$refs.contentFilteredScroller) {
+					this.$refs.contentFilteredScroller.$el.style.maxHeight = contentFilteredPagesScrollerMaxHeight + 'px'
+				}
+			})
+		},
+
+		async getContentFilteredPages() {
+			if (!this.filterString) {
+				this.contentFilteredPages = []
+				return
+			}
+
+			this.loadingContentFilteredPages = true
+			const oldFilterString = this.filterString
+			try {
+				const result = await this.contentSearch(this.filterString)
+				this.contentFilteredPages = result.data?.ocs.data.pages || []
+			} finally {
+				// prevent showing old results
+				if (oldFilterString === this.filterString) {
+					this.loadingContentFilteredPages = false
+				}
+			}
+		},
+
+		onPageFilterTabKey(event) {
+			const firstTagLink = this.$refs.filterStringTag[0]?.$refs?.link
+			if (this.showTagSelection && firstTagLink) {
+				event.preventDefault()
+				firstTagLink.focus()
+			}
+		},
+
+		onSelectFilterTag(tagId) {
+			this.addFilterTagId(tagId)
+			// Remove the tag search part from filter string when selecting the tag
+			this.filterString = this.filterString.substring(0, this.filterString.length - this.filterStringTagPart.length)
+			this.$refs.pageFilter.focus()
+		},
+
+		stopTagSelection() {
+			this.showTagSelection = false
+			this.$refs.pageFilter.focus()
 		},
 	},
 }
 
 </script>
 
-<style lang="scss" scoped>
+<style lang="scss">
+:root {
+	--page-list-header-height: calc(var(--default-clickable-area));
+	--page-trash-height: calc(var(--default-clickable-area) + 24px);
+	--page-list-height: calc(100vh - var(--header-height) - var(--collective-selector-height) - var(--page-list-header-height) - var(--page-trash-height));
+	--navigation-caption-height: calc(var(--default-clickable-area) + 4px + (var(--default-clickable-area) / 2));
+}
+</style>
 
+<style lang="scss" scoped>
 .scroller {
-	// NC header bar 50px; page list header bar 52px; landing page 48px; page trash 76px
-	height: calc(100vh - 50px - 52px - 48px - 76px);
+	// NC header bar 50px; collective selector; page list header bar; page trash; NcAppNavigationCaption 78px divided by 2 for multiple scrollers
+	max-height: calc((var(--page-list-height) - var(--navigation-caption-height) * 2) / 2);
 }
 
-.app-content-list {
-	// nextcloud-vue component sets `max-height: unset` on mobile.
-	// Overwrite this to fix stickyness of header and rootpage.
-	max-height: calc(100vh - 50px);
+.fullscroller{
+	// NC header bar 50px; collective selector; page list header bar; page trash; NcAppNavigationCaption 78px
+	max-height: calc(var(--page-list-height) - var(--navigation-caption-height));
 }
 
 .page-list-headerbar {
 	display: flex;
 	flex-direction: row;
-	position: sticky;
-	top: 0;
-	z-index: 2;
-	background-color: var(--color-main-background);
+	gap: 2px;
+	min-height: var(--page-list-header-height);
 	align-items: center;
-	justify-content: space-between;
-	margin-right: 4px;
+	padding-inline-start: var(--default-grid-baseline);
+	margin-inline-end: var(--default-grid-baseline);
 
 	.page-filter {
-		margin-left: 52px !important;
-		padding-bottom: 2px;
+		flex-grow: 1;
+
+		// NcInputFIeld reserves space above the input for a label outside of it, which we don't use.
+		:deep(.input-field) {
+			margin-block-start: 0;
+		}
 	}
 }
 
 .toggle {
-	height: 44px;
-	width: 44px;
+	height: var(--default-clickable-area);
+	width: var(--default-clickable-area);
 	padding: 0;
 }
 
@@ -322,23 +640,26 @@ export default {
 	opacity: 1;
 }
 
-.action-item--single.toggle-push-to-right {
-	margin-left: auto;
-}
-
 li.toggle-button.selected {
 	background-color: var(--color-primary-element-light);
 }
 
 .page-list {
-	padding: 0 4px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	flex-grow: 1;
+	padding: 0 var(--default-grid-baseline);
 }
 
-.page-list-root-page {
-	position: sticky;
-	top: 52px;
-	z-index: 1;
-	background-color: var(--color-main-background);
+.page-list-dragarea {
+	padding-bottom: 20px;
+}
+
+.page-list-filtered {
+	flex-grow: 1;
+	max-height: 100%;
+	overflow: hidden;
 }
 
 .sort-order-container {
@@ -346,7 +667,7 @@ li.toggle-button.selected {
 	align-items: center;
 
 	position: sticky;
-	top: 92px; // 2x 44px + 4px border-bottom
+	top: 0;
 	z-index: 1;
 	background-color: var(--color-main-background);
 	border-bottom: 4px solid var(--color-main-background);
@@ -357,23 +678,57 @@ li.toggle-button.selected {
 		align-items: center;
 
 		height: 24px;
+		// Required for ellipsised text overflow
+		max-width: calc(100% - 33px);
 		padding: 7px;
-		margin-left: 33px; // 40px - 7px
+		margin-inline-start: 33px; // 40px - 7px
 		background-color: var(--color-primary-element-light);
-		border-radius: var(--border-radius-pill);
+		border-radius: var(--border-radius-element, var(--border-radius-large));
 
-		overflow: hidden;
-		white-space: nowrap;
-		text-overflow: ellipsis;
+		&-text {
+			overflow: hidden;
+			white-space: nowrap;
+			text-overflow: ellipsis;
+		}
 
-		.sort-oder-chip-button {
+		&-button {
 			min-height: 20px;
 			min-width: 20px;
 			height: 20px;
 			width: 20px !important;
 			padding: 7px;
-			margin-left: 10px;
+			margin-inline-start: 10px;
 		}
+	}
+}
+
+.page-filter-tag-select {
+	max-height: 200px;
+	max-width: 140px;
+	padding: var(--default-grid-baseline);
+	overflow-y: auto;
+}
+
+.page-tags {
+	display: flex;
+	flex-wrap: wrap;
+	padding-inline: calc(2 * var(--default-grid-baseline));
+	gap: var(--default-grid-baseline);
+
+	&.select-popover {
+		padding-inline: unset;
+		flex-direction: column;
+	}
+}
+</style>
+
+<style lang="scss">
+.page-filter-popover {
+	margin-top: -18px;
+	margin-inline-start: -4px;
+
+	.v-popper__arrow-container {
+		display: none;
 	}
 }
 </style>

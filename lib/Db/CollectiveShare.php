@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Db;
 
 use JsonSerializable;
-
 use OCP\AppFramework\Db\Entity;
 
 /**
@@ -28,6 +32,9 @@ class CollectiveShare extends Entity implements JsonSerializable {
 	protected ?string $owner = null;
 	/** transient attributes, not persisted in database  */
 	protected bool $editable = false;
+	protected string $password = '';
+	protected ?\DateTime $expirationDate = null;
+	protected string $label = '';
 
 	public function getEditable(): bool {
 		return $this->editable;
@@ -35,6 +42,30 @@ class CollectiveShare extends Entity implements JsonSerializable {
 
 	public function setEditable(bool $editable): void {
 		$this->editable = $editable;
+	}
+
+	public function getPassword(): string {
+		return $this->password;
+	}
+
+	public function setPassword(string $password): void {
+		$this->password = $password;
+	}
+
+	public function getExpirationDate(): ?\DateTime {
+		return $this->expirationDate;
+	}
+
+	public function setExpirationDate(?\DateTime $expirationDate): void {
+		$this->expirationDate = $expirationDate;
+	}
+
+	public function getLabel(): string {
+		return $this->label;
+	}
+
+	public function setLabel(string $label): void {
+		$this->label = $label;
 	}
 
 	public function jsonSerialize(): array {
@@ -45,6 +76,9 @@ class CollectiveShare extends Entity implements JsonSerializable {
 			'token' => $this->token,
 			'owner' => $this->owner,
 			'editable' => $this->editable,
+			'hasPassword' => (bool)$this->password,
+			'expirationDate' => $this->expirationDate?->format('Y-m-d'),
+			'label' => $this->label,
 		];
 	}
 }

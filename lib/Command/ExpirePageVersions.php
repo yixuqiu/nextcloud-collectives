@@ -2,18 +2,25 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Command;
 
-use OC\Core\Command\Base;
 use OCA\Collectives\Service\MissingDependencyException;
 use OCA\Collectives\Service\NotFoundException;
 use OCA\Collectives\Service\NotPermittedException;
 use OCA\Collectives\Versions\CollectiveVersionsExpireManager;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class ExpirePageVersions extends Base {
-	public function __construct(private CollectiveVersionsExpireManager $expireManager) {
+class ExpirePageVersions extends Command {
+	public function __construct(
+		private readonly CollectiveVersionsExpireManager $expireManager,
+	) {
 		parent::__construct();
 	}
 
@@ -30,7 +37,7 @@ class ExpirePageVersions extends Base {
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output): int {
 		try {
-			$output->write('<info>Expiring old page versions ... </info>');
+			$output->write('<info>Expiring old page versions …</info>');
 			$this->expireManager->expireAll();
 			$output->writeln('<info>done</info>');
 			return 0;

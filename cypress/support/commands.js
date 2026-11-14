@@ -1,29 +1,32 @@
-import { login, logout } from '@nextcloud/cypress/commands'
-import { User } from '@nextcloud/cypress'
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
-import * as api from '../../src/apis/collectives/index.js'
 import axios from '@nextcloud/axios'
+import { addCommands, User } from '@nextcloud/e2e-test-server/cypress'
 import { generateOcsUrl } from '@nextcloud/router'
+import * as api from '../../src/apis/collectives/index.js'
 
 const url = Cypress.config('baseUrl').replace(/\/index.php\/?$/g, '')
-Cypress.env('baseUrl', url)
+Cypress.expose('baseUrl', url)
 const silent = { log: false }
+
+// Prevent @nextcloud/router from reading window.location
+window._oc_webroot = ''
 
 /**
  * Ignore ResizeObserver loop limit exceeded' exceptions from browser
  * See https://stackoverflow.com/q/49384120 for details
  */
-const resizeObserverLoopErrRe = /^[^(ResizeObserver loop limit exceeded)]/
 Cypress.on('uncaught:exception', (err) => {
 	/* returning false here prevents Cypress from failing the test */
-	if (resizeObserverLoopErrRe.test(err.message)) {
+	if (err.message.includes('ResizeObserver')) {
 		return false
 	}
 })
 
-// Authentication commands from @nextcloud/cypress
-Cypress.Commands.add('login', login)
-Cypress.Commands.add('logout', logout)
+addCommands()
 
 /**
  * Login with the given username to Nextcloud
@@ -39,14 +42,14 @@ Cypress.Commands.add('loginAs', (user, password = null) => {
  */
 Cypress.Commands.add('getEditor', (timeout = null) => {
 	timeout = timeout ?? Cypress.config('defaultCommandTimeout')
-	return cy.get('[data-collectives-el="editor"]', { timeout })
+	return cy.get('[data-cy-collectives="editor"]', { timeout })
 })
 
 /**
  * Get the ReadOnlyEditor/RichTextReader component
  */
 Cypress.Commands.add('getReadOnlyEditor', () => {
-	return cy.get('[data-collectives-el="reader"]')
+	return cy.get('[data-cy-collectives="reader"]')
 })
 
 Cypress.Commands.add('getEditorContent', (edit = false) => {
@@ -56,12 +59,12 @@ Cypress.Commands.add('getEditorContent', (edit = false) => {
 })
 
 /**
- * Switch page mode to view or edit
+ * Switch page mode to preview or edit
  */
-Cypress.Commands.add('switchToViewMode', () => {
+Cypress.Commands.add('switchToPreviewMode', () => {
 	Cypress.log()
 	cy.get('button.titleform-button')
-		.should('contain', 'Done')
+		.should('contain', 'Preview')
 		.click()
 	cy.getReadOnlyEditor()
 		.should('be.visible')
@@ -79,22 +82,37 @@ Cypress.Commands.add('switchToEditMode', () => {
 /**
  * Enable/disable a Nextcloud app
  */
-Cypress.Commands.add('enableApp', appName => {
+Cypress.Commands.add('enableApp', (appName) => {
 	Cypress.log()
 	cy.setAppEnabled(appName)
 })
 
-Cypress.Commands.add('disableApp', appName => {
+Cypress.Commands.add('disableApp', (appName) => {
 	Cypress.log()
 	cy.setAppEnabled(appName, false)
 })
 
 Cypress.Commands.add('setAppEnabled', (appName, value = true) => {
 	const verb = value ? 'enable' : 'disable'
-	const url = `${Cypress.env('baseUrl')}/index.php/settings/apps/${verb}`
-	return axios.post(url,
-		{ appIds: [appName] },
-	)
+	const headers = { Authorization: `Basic ${btoa('admin:admin')}` }
+
+	cy.env(['ncVersion']).then(({ ncVersion }) => {
+		let url, data
+		if (['stable33'].includes(ncVersion)) {
+			url = `${Cypress.expose('baseUrl')}/index.php/settings/apps/${verb}`
+			data = { appIds: [appName] }
+		} else {
+			// Nextcloud 34 and above
+			url = `${Cypress.expose('baseUrl')}/ocs/v2.php/apps/appstore/api/v1/apps/${verb}`
+			data = { appId: appName }
+		}
+
+		return axios.post(
+			url,
+			data,
+			{ headers },
+		)
+	})
 })
 
 /**
@@ -102,58 +120,30 @@ Cypress.Commands.add('setAppEnabled', (appName, value = true) => {
  */
 Cypress.Commands.add('enableDashboardWidget', (widgetName) => {
 	Cypress.log()
-	const url = `${Cypress.env('baseUrl')}/index.php/apps/dashboard/layout`
-	return axios.post(url,
-		{ layout: widgetName },
+	const url = `${Cypress.expose('baseUrl')}/ocs/v2.php/apps/dashboard/api/v3/layout`
+	return axios.post(
+		url,
+		{ layout: [widgetName] },
 	)
-})
-
-Cypress.Commands.add('store', (selector, options = {}) => {
-	Cypress.log()
-	if (selector) {
-		cy.window(silent)
-			.its(`app.$store.${selector}`, silent)
-	} else {
-		cy.window(silent)
-			.its('app.$store', silent)
-	}
 })
 
 Cypress.Commands.add('routeTo', (path) => {
 	Cypress.log()
 	cy.window(silent)
-		.its('app.$router', silent)
-		.invoke(silent, 'push', path)
+		.its('app', silent)
+		.then((app) => {
+			// Vue 3: router is on globalProperties
+			const router = app.$router ?? app.config.globalProperties.$router
+			return router.push(path)
+		})
 })
 
-/*
- * Dispatch action
- *
- * When used as a child command expects an object to be yielded
- * and merges it into the payload:
- * `cy.wrap({ id: 123 }).dispatch(SOME_ACTION, { value: 'Hello' })`
- * will dispatch `SOME_ACTION` with a payload of `{ id: 123, value: 'Hello'}`.
- *
- * If null is yielded the action won't be dispatched.
- * This is useful for cleanup commands like `deleteCollective`.
- */
-Cypress.Commands.add('dispatch',
-	{ prevSubject: 'optional' },
-	(subject, action, payload) => {
-		// used as a child command but null was yielded
-		if (subject === null) {
-			return
-		}
-		Cypress.log()
-		cy.store()
-			.invoke(silent, 'dispatch', action, { ...payload, ...subject })
-	})
-
-Cypress.Commands.add('findBy',
+Cypress.Commands.add(
+	'findBy',
 	{ prevSubject: true },
 	(subject, properties) => {
 		Cypress.log()
-		return subject.find(item => {
+		return subject.find((item) => {
 			for (const key in properties) {
 				if (item[key] !== properties[key]) {
 					return false
@@ -161,7 +151,8 @@ Cypress.Commands.add('findBy',
 			}
 			return true
 		}) || null
-	})
+	},
+)
 
 /**
  * Create a fresh collective for use in the test
@@ -178,7 +169,7 @@ Cypress.Commands.add('deleteAndSeedCollective', (name) => {
 
 Cypress.Commands.add(
 	'seedCollective',
-	name => api.newCollective({ name }),
+	(name) => api.newCollective({ name }),
 )
 
 /**
@@ -186,7 +177,7 @@ Cypress.Commands.add(
  */
 Cypress.Commands.add('createCollective', (name, members = []) => {
 	Cypress.log()
-	cy.get('button').contains('New collective').click()
+	cy.openNewCollectiveModal()
 	cy.get('.collective-name input[type="text"]').type(`${name}{enter}`)
 	if (members.length > 0) {
 		for (const member of members) {
@@ -196,7 +187,7 @@ Cypress.Commands.add('createCollective', (name, members = []) => {
 			cy.get('.selected-members .user-bubble__content').should('contain', member)
 		}
 	}
-	cy.get('button').contains('Create').click()
+	cy.get('.dialog__actions button').contains('Create').click()
 })
 
 /**
@@ -211,15 +202,13 @@ Cypress.Commands.add('deleteCollective', (name) => {
 
 Cypress.Commands.add('getCollectives', () => {
 	return api.getCollectives()
-		.then(response => response.data.data)
+		.then((response) => response.data.ocs.data.collectives)
 })
 
 Cypress.Commands.add('getCollectivesFolder', () => {
 	return api.getCollectivesFolder()
-		.then(response => response.data.ocs.data)
+		.then((response) => response.data.ocs.data.user_folder)
 })
-
-Cypress.Commands.add('setCollectivesFolder', api.setCollectivesFolder)
 
 /**
  * Move a collective into the trash if it exists.
@@ -234,7 +223,7 @@ Cypress.Commands.add('trashCollective', (name) => {
 
 Cypress.Commands.add('getTrashCollectives', () => {
 	return api.getTrashCollectives()
-		.then(response => response.data.data)
+		.then((response) => response.data.ocs.data.collectives)
 })
 
 /**
@@ -284,15 +273,16 @@ function collectiveContext(collective) {
 	}
 }
 
-Cypress.Commands.add('getPages', collective => {
+Cypress.Commands.add('getPages', (collective) => {
 	return api.getPages(collectiveContext(collective))
-		.then(response => response.data.data)
+		.then((response) => response.data.ocs.data.pages)
 })
 
 /**
  * Add a page to a collective
  */
-Cypress.Commands.add('seedPage',
+Cypress.Commands.add(
+	'seedPage',
 	{ prevSubject: true },
 	(subject, name, parentFilePath = '', parentFileName = 'Readme.md') => {
 		Cypress.log()
@@ -304,45 +294,30 @@ Cypress.Commands.add('seedPage',
 					{ parentId, title: name, pagePath: name },
 				)
 			})
-			.its('data.data.id')
-			.then(pageId => ({ ...subject, pageId }))
-	})
+			.its('data.ocs.data.page.id')
+			.then((pageId) => ({ ...subject, collectiveId: collectiveContext(subject).collectiveId, pageId }))
+	},
+)
 
 /**
  * Upload content of a page
  */
 Cypress.Commands.add('seedPageContent', (pagePath, content) => {
 	const contentForLog = content.length > 200
-		? content.substring(0, 200) + '...'
+		? content.substring(0, 200) + '…'
 		: content
 	Cypress.log({ message: `${pagePath}, ${contentForLog}` })
-	cy.uploadContent(`Collectives/${pagePath}`, content)
-})
-
-Cypress.Commands.add('uploadFile', (path, mimeType, remotePath = '') => {
-	Cypress.log()
-	// Get fixture
-	return cy.fixture(path, 'base64').then(data => {
-		// convert the base64 string to a blob
-		const blob = Cypress.Blob.base64StringToBlob(data, mimeType)
-		const file = new File([blob], path, { type: mimeType })
-		return cy.uploadContent(remotePath + path, file, mimeType)
-			.then(response => {
-				const ocFileId = response.headers['oc-fileid']
-				const fileId = parseInt(ocFileId.substring(0, ocFileId.indexOf('oc')))
-				return fileId
-			})
-	})
+	cy.uploadContent(`.Collectives/${pagePath}`, content)
 })
 
 /**
- * Generic upload of content - used by seedPageContent and uploadPage
+ * Generic upload of content - used by seedPageContent
  */
 Cypress.Commands.add('uploadContent', (path, content, mimetype = 'text/markdown') => {
 	// @nextcloud/axios automatic handling for request tokens does not work for webdav
 	cy.request('/csrftoken').then(({ body }) => {
 		const requesttoken = body.token
-		const url = `${Cypress.env('baseUrl')}/remote.php/webdav/${path}`
+		const url = `${Cypress.expose('baseUrl')}/remote.php/webdav/${path}`
 		return axios.put(url, content, {
 			headers: {
 				requesttoken,
@@ -352,42 +327,9 @@ Cypress.Commands.add('uploadContent', (path, content, mimetype = 'text/markdown'
 	})
 })
 
-/**
- * Create a team (optionally with given config)
- */
-Cypress.Commands.add('seedCircle', (name, config = null) => {
-	Cypress.log()
-	cy.circleFind(name)
-		.then(async circle => {
-			const url = `${Cypress.env('baseUrl')}/ocs/v2.php/apps/circles/circles`
-			let circleId
-			if (!circle) {
-				const response = await axios.post(url,
-					{ name, personal: false, local: true },
-				)
-				circleId = response.data.ocs.data.id
-			} else {
-				circleId = circle.id
-			}
-			if (config) {
-				// For now we only set the visibility
-				const bits = [
-					['visible', 8],
-					['open', 16],
-				]
-				const value = bits
-					.filter(([k, v]) => config[k])
-					.reduce((sum, [k, v]) => sum + v, 0)
-				await axios.put(`${url}/${circleId}/config`,
-					{ value },
-				)
-			}
-		})
-})
-
 Cypress.Commands.add('getCircles', () => {
 	return axios.get(generateOcsUrl('apps/circles/circles'))
-		.then(response => response.data.ocs.data)
+		.then((response) => response.data.ocs.data)
 })
 
 Cypress.Commands.add('circleFind', (name) => {
@@ -399,12 +341,14 @@ Cypress.Commands.add('circleFind', (name) => {
 /**
  * Add someone to a team
  */
-Cypress.Commands.add('circleAddMember',
+Cypress.Commands.add(
+	'circleAddMember',
 	{ prevSubject: true },
 	async ({ id }, userId, type = 1) => {
 		Cypress.log()
-		const url = `${Cypress.env('baseUrl')}/ocs/v2.php/apps/circles/circles/${id}/members`
-		const response = await axios.post(url,
+		const url = `${Cypress.expose('baseUrl')}/ocs/v2.php/apps/circles/circles/${id}/members`
+		const response = await axios.post(
+			url,
 			{ userId, type },
 		)
 		const memberId = response.data.ocs.data.id
@@ -412,21 +356,40 @@ Cypress.Commands.add('circleAddMember',
 	},
 )
 
-Cypress.Commands.add('circleSetMemberLevel',
+Cypress.Commands.add(
+	'circleSetMemberLevel',
 	{ prevSubject: true },
 	({ circleId, memberId }, level) => {
 		Cypress.log()
-		const url = `${Cypress.env('baseUrl')}/ocs/v2.php/apps/circles/circles/${circleId}/members`
-		return axios.put(`${url}/${memberId}/level`,
+		const url = `${Cypress.expose('baseUrl')}/ocs/v2.php/apps/circles/circles/${circleId}/members`
+		return axios.put(
+			`${url}/${memberId}/level`,
 			{ level },
 		)
 	},
 )
 
-/**
- * Fail the test on the initial run to check if retries work
- */
-Cypress.Commands.add('testRetry', () => {
-	cy.wrap(cy.state('test').currentRetry())
-		.should('be.equal', 2)
+Cypress.Commands.add('stubClipboardAndVisit', (url) => {
+	cy.visit({
+		url,
+		onBeforeLoad(win) {
+			// navigator.clipboard doesn't exist on HTTP requests (in CI), so let's create it
+			if (!win.navigator.clipboard) {
+				win.navigator.clipboard = {
+					__proto__: {
+						writeText: () => {},
+					},
+				}
+			}
+			// overwrite navigator.clipboard.writeText with cypress stub
+			cy.stub(win.navigator.clipboard, 'writeText')
+				.as('clipboardWriteText')
+		},
+	})
+})
+
+Cypress.Commands.add('getClipboardText', () => {
+	cy.get('@clipboardWriteText')
+		.should('have.been.called')
+		.its('lastCall.args[0]')
 })

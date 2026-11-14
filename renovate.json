@@ -1,19 +1,24 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base"
+    "config:recommended"
   ],
   "timezone": "Europe/Berlin",
   "schedule": [
     "before 5am every weekday",
     "every weekend"
   ],
-  "reviewers": ["max-nextcloud", "mejo-"],
-  "labels": ["dependencies"],
+  "reviewers": [
+    "max-nextcloud",
+    "mejo-"
+  ],
+  "labels": [
+    "dependencies"
+  ],
   "rangeStrategy": "bump",
+  "minimumReleaseAge": "4 days",
   "rebaseWhen": "conflicted",
-  "ignoreUnstable": false,
-  "baseBranches": [
+  "baseBranchPatterns": [
     "main"
   ],
   "enabledManagers": [
@@ -28,20 +33,13 @@
       "groupName": "cypress",
       "matchPackageNames": [
         "cypress",
-        "@nextcloud/cypress"
+        "@nextcloud/e2e-test-server"
       ]
     },
-    {
-      "matchPackageNames": ["vue"],
-      "allowedVersions": "<3"
-    },
-    {
-      "matchPackageNames": ["vue-router"],
-      "allowedVersions": "<4"
-    },
-    {
-      "matchPackageNames": ["vuex"],
-      "allowedVersions": "<4"
-    }
+	{
+		"description": "Disable minimum release age checks for internal dependencies",
+		"matchPackageNames": ["@nextcloud/*"],
+		"minimumReleaseAge": null
+	}
   ]
 }

@@ -1,68 +1,125 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="members-widget">
-		<SkeletonLoading v-if="loading"
-			type="avatar"
-			:count="3"
-			class="members-widget-skeleton" />
-		<div v-else ref="members" class="members-widget-members">
-			<NcAvatar v-for="member in trimmedMembers"
-				:key="member.singleId"
-				:user="member.userId"
-				:display-name="member.displayName"
-				:is-no-user="isNoUser(member)"
-				:icon-class="iconClass(member)"
-				:disable-menu="true"
-				:tooltip-message="member.displayName"
-				:size="44" />
-			<NcButton type="secondary"
-				:title="t('collectives', 'Show members')"
-				:aria-label="t('collectives', 'Show all members of the collective')"
-				@click="openCollectiveMembers()">
-				<template #icon>
-					<DotsHorizontalIcon :size="20" />
-				</template>
-			</NcButton>
+		<a
+			class="members-title"
+			:aria-label="expandLabel"
+			@keydown.enter="toggleWidget"
+			@click="toggleWidget">
+			<WidgetHeading :title="t('collectives', 'Members')" />
+			<div class="toggle-icon">
+				<ChevronDownIcon
+					:size="24"
+					:class="{ collapsed: !showMembers }" />
+			</div>
+		</a>
+		<div v-show="showMembers" class="members-container">
+			<SkeletonLoading
+				v-if="loading"
+				type="avatar"
+				:count="3"
+				class="members-skeleton" />
+			<div v-else ref="members" class="members-members">
+				<NcAvatar
+					v-for="member in trimmedMembers"
+					:key="member.singleId"
+					:user="member.userId"
+					:displayName="member.displayName"
+					:isNoUser="isNoUser(member)"
+					:iconClass="iconClass(member)"
+					disableMenu
+					:tooltipMessage="member.displayName"
+					:size="avatarSize" />
+				<NcButton
+					variant="tertiary"
+					:title="showMembersTitle"
+					:aria-label="showMembersAriaLabel"
+					@click="openCollectiveMembers()">
+					<template #icon>
+						<AccountMultiplePlusIcon v-if="isAdmin" :size="16" />
+						<AccountMultipleIcon v-else :size="16" />
+					</template>
+				</NcButton>
+			</div>
 		</div>
 	</div>
 </template>
 
 <script>
+import { showError } from '@nextcloud/dialogs'
+import { t } from '@nextcloud/l10n'
+import { generateUrl } from '@nextcloud/router'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
 import debounce from 'debounce'
-import { mapActions, mapGetters, mapMutations } from 'vuex'
-import { NcAvatar, NcButton } from '@nextcloud/vue'
-import DotsHorizontalIcon from 'vue-material-design-icons/DotsHorizontal.vue'
+import { mapActions, mapState } from 'pinia'
+import NcAvatar from '@nextcloud/vue/components/NcAvatar'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import AccountMultipleIcon from 'vue-material-design-icons/AccountMultipleOutline.vue'
+import AccountMultiplePlusIcon from 'vue-material-design-icons/AccountMultiplePlus.vue'
+import ChevronDownIcon from 'vue-material-design-icons/ChevronDown.vue'
 import SkeletonLoading from '../../SkeletonLoading.vue'
-import { GET_CIRCLE_MEMBERS } from '../../../store/actions.js'
-import { circlesMemberTypes } from '../../../constants.js'
+import WidgetHeading from './WidgetHeading.vue'
+import { CIRCLE_MEMBERS_PARTIAL_LIMIT, circlesMemberTypes } from '../../../constants.js'
+import { useCirclesStore } from '../../../stores/circles.js'
+import { useCollectivesStore } from '../../../stores/collectives.js'
+import { usePagesStore } from '../../../stores/pages.js'
+import { circleMemberType } from '../../../util/circles.ts'
 
 export default {
 	name: 'MembersWidget',
 
 	components: {
-		DotsHorizontalIcon,
+		AccountMultipleIcon,
+		AccountMultiplePlusIcon,
+		ChevronDownIcon,
 		NcAvatar,
 		NcButton,
 		SkeletonLoading,
+		WidgetHeading,
+	},
+
+	setup() {
+		const isMobile = useIsMobile()
+		return { isMobile }
 	},
 
 	data() {
 		return {
 			showMembersCount: 3,
+			updateShowMembersCountDebounced: debounce(this.updateShowMembersCount, 50),
 		}
 	},
 
 	computed: {
-		...mapGetters([
+		...mapState(useCirclesStore, [
+			'circleMembers',
 			'circleMembersSorted',
-			'circleMemberType',
-			'currentCollective',
-			'recentPagesUserIds',
 		]),
+
+		...mapState(useCollectivesStore, [
+			'currentCollective',
+			'isCollectiveAdmin',
+		]),
+
+		...mapState(usePagesStore, ['recentPagesUserIds']),
+
+		expandLabel() {
+			return this.showMembers
+				? t('collectives', 'Collapse members')
+				: t('collectives', 'Expand members')
+		},
+
+		showMembers() {
+			return this.currentCollective.userShowMembers ?? true
+		},
 
 		sortedMembers() {
 			return this.circleMembersSorted(this.currentCollective.circleId)
-				.slice()
-				.sort(this.sortLastActiveFirst)
+				.toSorted(this.sortLastActiveFirst)
 		},
 
 		trimmedMembers() {
@@ -75,55 +132,93 @@ export default {
 		},
 
 		isNoUser() {
-			return function(member) {
-				return this.circleMemberType(member) !== circlesMemberTypes.TYPE_USER
+			return (member) => {
+				return circleMemberType(member) !== circlesMemberTypes.TYPE_USER
 			}
 		},
 
+		avatarSize() {
+			return parseInt(window.getComputedStyle(document.body).getPropertyValue('--default-clickable-area'))
+		},
+
 		iconClass() {
-			return function(member) {
+			return (member) => {
 				return this.isNoUser(member) ? 'icon-group-white' : null
 			}
+		},
+
+		isAdmin() {
+			return this.isCollectiveAdmin(this.currentCollective)
+		},
+
+		showMembersTitle() {
+			return this.isAdmin
+				? t('collectives', 'Manage members')
+				: t('collectives', 'Show members')
+		},
+
+		showMembersAriaLabel() {
+			return this.isAdmin
+				? t('collectives', 'Manage members of the collective')
+				: t('collectives', 'Show all members of the collective')
+		},
+
+		teamUrl() {
+			return generateUrl('/apps/contacts/circle/{teamId}', { teamId: this.currentCollective.circleId })
+		},
+
+		hasContactsApp() {
+			return 'contacts' in window.OC.appswebroots
+		},
+
+		showTeamOverviewButton() {
+			return this.hasContactsApp && this.circleMembers(this.currentCollective.circleId).length > 1
 		},
 	},
 
 	watch: {
-		'sortedMembers.length'() {
+		'sortedMembers.length': function() {
 			this.$nextTick(() => {
-				this.updateShowMembersCount()
+				this.updateShowMembersCountDebounced()
 			})
 		},
 	},
 
-	beforeMount() {
-		this.dispatchGetCircleMembers(this.currentCollective.circleId)
-	},
-
 	mounted() {
-		window.addEventListener('resize', this.updateShowMembersCount)
+		this.updateShowMembersCountDebounced()
+		window.addEventListener('resize', this.updateShowMembersCountDebounced)
 	},
 
-	unmounted() {
-		window.removeEventListener('resize', this.updateShowMembersCount)
+	beforeUnmount() {
+		window.removeEventListener('resize', this.updateShowMembersCountDebounced)
 	},
 
 	methods: {
-		...mapActions({
-			dispatchGetCircleMembers: GET_CIRCLE_MEMBERS,
-		}),
+		t,
 
-		...mapMutations([
+		...mapActions(useCollectivesStore, [
+			'setCollectiveUserSettingShowMembers',
 			'setMembersCollectiveId',
 		]),
 
-		updateShowMembersCount: debounce(function() {
-			// How many avatars (44px width + 12px gap) fit? Substract one for the more button.
+		updateShowMembersCount() {
+			// How many avatars (default-clickable-area + 12px gap) fit? Subtract one for the more button.
 			const membersWidth = this.$refs.members?.clientWidth
+			const defaultClickableArea = parseInt(window.getComputedStyle(document.body).getPropertyValue('--default-clickable-area'))
+			const avatarHeight = defaultClickableArea + 12
 			if (membersWidth) {
-				const maxMembers = Math.floor(membersWidth / 56) - 1
-				this.showMembersCount = Math.min(this.sortedMembers.length, maxMembers)
+				const maxMembers = Math.floor(membersWidth / avatarHeight) - 1
+				this.showMembersCount = Math.min(this.sortedMembers.length, maxMembers, CIRCLE_MEMBERS_PARTIAL_LIMIT)
 			}
-		}, 50),
+		},
+
+		toggleWidget() {
+			this.setCollectiveUserSettingShowMembers({ id: this.currentCollective.id, showMembers: !this.showMembers })
+				.catch((error) => {
+					console.error(error)
+					showError(t('collectives', 'Could not save show members setting for collective'))
+				})
+		},
 
 		openCollectiveMembers() {
 			this.setMembersCollectiveId(this.currentCollective.id)
@@ -149,13 +244,33 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-.members-widget-skeleton {
-	height: 44px;
+.members-title {
+	display: flex;
+
+	.toggle-icon {
+		display: flex;
+		padding: 24px 0 12px 8px;
+
+		.collapsed {
+			transition: transform var(--animation-slow);
+			transform: rotate(-90deg);
+		}
+	}
 }
 
-.members-widget-members {
+.members-container {
+	display: flex;
+	flex-grow: 1;
+}
+
+.members-skeleton {
+	height: var(--default-clickable-area);
+}
+
+.members-members {
 	display: flex;
 	flex-direction: row;
 	gap: 12px;
+	flex-grow: 1;
 }
 </style>

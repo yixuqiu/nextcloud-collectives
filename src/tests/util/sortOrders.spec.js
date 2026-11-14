@@ -1,26 +1,84 @@
-/*
- * @copyright Copyright (c) 2022 Jonas <jonas@freesources.org>
- *
- * @author Jonas <jonas@freesources.org>
- *
- * @license GNU AGPL version 3 or any later version
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { byOrder } from '../../util/sortOrders.js'
+import { beforeAll, expect, test } from 'vitest'
+import { byName, byOrder, byTimeAsc, byTimeDesc, byTitleAsc, byTitleDesc } from '../../util/sortOrders.js'
+
+beforeAll(() => {
+	// Mock window and window.OC
+	global.window = {
+		OC: { getLanguage: () => 'en' },
+	}
+})
+
+test('by name', () => {
+	const unsorted = [
+		{ name: '2' },
+		{ name: 'a' },
+		{ name: '10' },
+		{ name: '1' },
+	]
+	const sorted = [
+		{ name: '1' },
+		{ name: '2' },
+		{ name: '10' },
+		{ name: 'a' },
+	]
+	expect(unsorted.sort(byName))
+		.toStrictEqual(sorted)
+})
+
+test('by title', () => {
+	const unsorted = [
+		{ title: '2' },
+		{ title: 'a' },
+		{ title: '10' },
+		{ title: '1' },
+	]
+	const sortedAsc = [
+		{ title: '1' },
+		{ title: '2' },
+		{ title: '10' },
+		{ title: 'a' },
+	]
+	const sortedDesc = [
+		{ title: 'a' },
+		{ title: '10' },
+		{ title: '2' },
+		{ title: '1' },
+	]
+	expect(unsorted.sort(byTitleAsc))
+		.toStrictEqual(sortedAsc)
+	expect(unsorted.sort(byTitleDesc))
+		.toStrictEqual(sortedDesc)
+})
+
+test('by time', () => {
+	const unsorted = [
+		{ timestamp: 7 },
+		{ timestamp: 1 },
+		{ timestamp: 3 },
+		{ timestamp: 10 },
+	]
+	const sortedAsc = [
+		{ timestamp: 10 },
+		{ timestamp: 7 },
+		{ timestamp: 3 },
+		{ timestamp: 1 },
+	]
+	const sortedDesc = [
+		{ timestamp: 1 },
+		{ timestamp: 3 },
+		{ timestamp: 7 },
+		{ timestamp: 10 },
+	]
+	expect(unsorted.sort(byTimeAsc))
+		.toStrictEqual(sortedAsc)
+	expect(unsorted.sort(byTimeDesc))
+		.toStrictEqual(sortedDesc)
+})
 
 test('by indices', () => {
 	const one = { index: 0 }
@@ -31,7 +89,6 @@ test('by indices', () => {
 })
 
 test('missing indices', () => {
-	global.OC = { getLanguage: () => 'en' }
 	const one = { index: 0 }
 	const two = { index: 1 }
 	const other = { index: -1, title: 'asdf' }

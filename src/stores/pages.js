@@ -1,0 +1,1214 @@
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import { getCurrentUser } from '@nextcloud/auth'
+import { isCancel } from '@nextcloud/axios'
+import { generateRemoteUrl } from '@nextcloud/router'
+import { useLocalStorage } from '@vueuse/core'
+import { defineStore } from 'pinia'
+import * as api from '../apis/collectives/index.js'
+import { INDEX_PAGE, PAGE_SUFFIX, pageModes, TEMPLATE_PATH } from '../constants.js'
+import * as sortOrders from '../util/sortOrders.js'
+import { removeFrom, updateOrAddTo } from './collectionHelpers.js'
+import { useCollectivesStore } from './collectives.js'
+import { useRootStore } from './root.js'
+
+const STORE_PREFIX = 'collectives/pinia/pages/'
+// used in `PagePicker.vue`
+export const ALL_PAGES_STORE_NAME = STORE_PREFIX + 'allPages'
+
+// In-flight page list requests per page list index, with a function to repeat them
+const pagesRequests = {}
+
+export const usePagesStore = defineStore('pages', {
+	state: () => ({
+		// Uses `collectiveId` as index for internal collectives and `share_<shareToken>` for public ones
+		allPages: useLocalStorage(ALL_PAGES_STORE_NAME, {}),
+		allTrashPages: useLocalStorage(STORE_PREFIX + 'allTrashPages', {}),
+		allAttachments: useLocalStorage(STORE_PREFIX + 'allAttachments', {}),
+		textMode: {},
+		trashPagesLoaded: false,
+		newPage: undefined,
+		newPageParentId: null,
+		sortBy: undefined,
+		collapsed: useLocalStorage(STORE_PREFIX + 'collapsed', {}),
+		outline: useLocalStorage(STORE_PREFIX + 'outline', {}),
+		deletedAttachments: [],
+		attachmentsLoaded: false,
+		attachmentsError: false,
+		editorEmbeddedAttachmentSrcs: [],
+		readerEmbeddedAttachmentSrcs: [],
+		dragParentPageId: null,
+		highlightAnimationPageId: null,
+		dragoverTargetPageId: null,
+		draggedPageId: null,
+	}),
+
+	getters: {
+		collectiveId() {
+			const collectivesStore = useCollectivesStore()
+			return collectivesStore.currentCollective?.id
+		},
+
+		collectiveIndex(state) {
+			const rootStore = useRootStore()
+			return rootStore.isPublic
+				? `share_${rootStore.shareTokenParam}`
+				: state.collectiveId
+		},
+
+		indexForCollective() {
+			return (collective) => {
+				const rootStore = useRootStore()
+				return rootStore.isPublic
+					? `share_${collective.shareToken}`
+					: collective.id
+			}
+		},
+
+		context(state) {
+			const rootStore = useRootStore()
+			return {
+				isPublic: rootStore.isPublic,
+				collectiveId: state.collectiveId,
+				shareTokenParam: rootStore.shareTokenParam,
+			}
+		},
+
+		pagesForCollective: (state) => {
+			return (collective) => state.allPages[state.indexForCollective(collective)] || []
+		},
+
+		pages: (state) => {
+			return state.allPages[state.collectiveIndex] || []
+		},
+
+		pageById(state) {
+			// cache the index
+			const pagesById = Object.fromEntries(state.pages.map((p) => [p.id, p]))
+			return (pageId) => {
+				return pagesById[pageId]
+			}
+		},
+
+		trashPages: (state) => {
+			return state.allTrashPages[state.collectiveIndex] || []
+		},
+
+		attachments: (state) => {
+			return state.allAttachments[state.collectiveIndex]?.[state.currentPageId] || []
+		},
+
+		pagesLoaded: (state) => {
+			return state.pages.length > 0
+		},
+
+		isLandingPage: (state) => {
+			const rootStore = useRootStore()
+			const collectivesStore = useCollectivesStore()
+
+			if (collectivesStore.currentCollectiveIsPageShare) {
+				// No landing page in page shares
+				return false
+			}
+
+			return (!rootStore.pageId && !rootStore.pageParam)
+				|| rootStore.pageId === state.rootPage?.id
+				|| rootStore.pageParam === INDEX_PAGE
+		},
+		isIndexPage(state) {
+			return state.currentPage.fileName === INDEX_PAGE + PAGE_SUFFIX
+		},
+
+		rootPage(state) {
+			const collectivesStore = useCollectivesStore()
+			return collectivesStore.currentCollectiveIsPageShare
+				? state.pages[0]
+				: state.pages.find((p) => (p.parentId === 0))
+		},
+
+		isSinglePageShare(state) {
+			const collective = useCollectivesStore().currentCollective
+			// Editable page shares keep the navigation to allow adding subpages
+			return !!collective?.isPageShare
+				&& !collective.shareEditable
+				&& state.pages.length <= 1
+		},
+
+		currentPageIds(state) {
+			const rootStore = useRootStore()
+			// Return root page
+			if ((!rootStore.pageId && !rootStore.pageParam)
+				|| rootStore.pageParam === INDEX_PAGE) {
+				// state.pages might not be available yet
+				return state.rootPage
+					? [state.rootPage.id]
+					: []
+			}
+
+			const pageIds = []
+			let pageId = rootStore.pageId || rootStore.fileIdQuery
+			if (pageId) {
+				do {
+					const page = state.pageById(pageId)
+					pageIds.unshift(page.id)
+					pageId = page.parentId
+				} while (pageId)
+				return pageIds
+			}
+
+			// Iterate through all path levels to find the correct page
+			const parts = rootStore.pageParam.split('/').filter(Boolean)
+			let page = state.rootPage
+			for (const i in parts) {
+				page = state.pages.find((p) => (p.parentId === page.id && p.title === parts[i]))
+				if (page) {
+					pageIds.push(page.id)
+				} else {
+					return []
+				}
+			}
+			return pageIds
+		},
+
+		currentPageId(state) {
+			const rootStore = useRootStore()
+			return rootStore.pageId
+				|| rootStore.fileIdQuery
+				|| state.currentPageIds.at(-1)
+		},
+
+		currentPage(state) {
+			return state.pageById(state.currentPageId)
+		},
+
+		pagePath: (state) => (page) => {
+			const collectivesStore = useCollectivesStore()
+
+			// Landing page
+			if (page.id === state.rootPage.id) {
+				return collectivesStore.currentCollectivePath
+			}
+
+			if (!page.slug) {
+				const { filePath, fileName, title, id } = page
+				const titlePart = fileName !== INDEX_PAGE + PAGE_SUFFIX && title
+
+				const pagePath = [...filePath.split('/'), titlePart]
+					.filter(Boolean).map(encodeURIComponent).join('/')
+				return pagePath
+					? `${collectivesStore.currentCollectivePath}/${pagePath}?fileId=${id}`
+					: collectivesStore.currentCollectivePath
+			}
+
+			return `${collectivesStore.currentCollectivePath}/${page.slug}-${page.id}`
+		},
+
+		currentPagePath(state) {
+			return state.pagePath(state.currentPage)
+		},
+
+		pagePathTitle: () => (page) => {
+			const { filePath, fileName, title } = page
+			const titlePart = fileName !== INDEX_PAGE + PAGE_SUFFIX && title
+			return [filePath, titlePart].filter(Boolean).join('/')
+		},
+
+		pageFilePath: () => (page) => {
+			return [
+				page.collectivePath,
+				page.filePath,
+				page.fileName,
+			].filter(Boolean).join('/')
+		},
+
+		currentPageFilePath(state) {
+			return state.pageFilePath(state.currentPage)
+		},
+
+		pageDavPath: (state) => (page) => {
+			const rootStore = useRootStore()
+			const parts = state.pageFilePath(page).split('/')
+			if (!rootStore.isPublic) {
+				parts.unshift(getCurrentUser().uid)
+			}
+			return parts
+				.map((p) => encodeURIComponent(p))
+				.join('/')
+		},
+
+		currentPageDavPath(state) {
+			return state.pageDavPath(state.currentPage)
+		},
+
+		pageDavUrl: (state) => (page) => {
+			const rootStore = useRootStore()
+			return rootStore.isPublic
+				? generateRemoteUrl(`dav/files/${rootStore.shareTokenParam}/${state.pageDavPath(page)}`)
+						.replace('/remote.php', '/public.php')
+				: generateRemoteUrl(`dav/files/${state.pageDavPath(page)}`)
+		},
+
+		currentPageDavUrl(state) {
+			const rootStore = useRootStore()
+			return rootStore.isPublic
+				? generateRemoteUrl(`dav/files/${rootStore.shareTokenParam}/${state.currentPageDavPath}`)
+						.replace('/remote.php', '/public.php')
+				: generateRemoteUrl(`dav/files/${state.currentPageDavPath}`)
+		},
+
+		hasSubpages(state) {
+			return (pageId) => {
+				return state.pages.filter((p) => p.parentId === pageId).length > 0
+			}
+		},
+
+		// Get the indices in the tree leading up to the given page.
+		// For example: Third child of the first page will return [0, 2].
+		pageIndices(state) {
+			return ({ id, parentId }) => {
+				if (parentId === 0) {
+					return [] // root page
+				}
+				const parent = state.pageById(parentId)
+				const idx = parent.subpageOrder.indexOf(id)
+				return [...state.pageIndices(parent), idx]
+			}
+		},
+
+		favoritePages(state) {
+			const collectivesStore = useCollectivesStore()
+			const pages = collectivesStore.currentCollective.userFavoritePages
+				.map((id) => state.pageById(id))
+				.filter(Boolean) // filter out undefined
+			return state.sortPages(pages)
+		},
+
+		sortPages(state) {
+			return (pages) => pages
+				.map((page) => ({ page, indices: state.pageIndices(page) }))
+				.toSorted(sortOrders.byIndices)
+				.map(({ page }) => page)
+		},
+
+		hasFavoritePages(state) {
+			return state.favoritePages.length > 0
+		},
+
+		sortedSubpagesForCollective(state) {
+			return (collective, parentId, sortOrder = null) => {
+				const parentPage = state.pagesForCollective(collective).find((p) => p.id === parentId)
+				const customOrder = parentPage?.subpageOrder || []
+				return state.pagesForCollective(collective)
+					.filter((p) => p.parentId === parentId)
+					// add the index from customOrder
+					.map((p) => ({ ...p, index: customOrder.indexOf(p.id) }))
+					// sort by given order, fall back to user setting
+					.toSorted(sortOrders[sortOrder] || state.sortOrder)
+			}
+		},
+
+		sortedSubpages(state) {
+			return (parentId, sortOrder) => {
+				const collectivesStore = useCollectivesStore()
+				return state.sortedSubpagesForCollective(collectivesStore.currentCollective, parentId, sortOrder)
+			}
+		},
+
+		visibleSubpagesForCollective(state) {
+			return (collective, parentId) => {
+				return state.sortedSubpagesForCollective(collective, parentId)
+			}
+		},
+
+		visibleSubpages: (state) => (parentId) => {
+			return state.sortedSubpages(parentId)
+		},
+
+		pagesTreeWalkForCollective(state) {
+			return (collective, parentId = 0) => {
+				const pages = []
+				for (const page of state.visibleSubpagesForCollective(collective, parentId)) {
+					pages.push(page)
+					for (const subpage of state.pagesTreeWalkForCollective(collective, page.id)) {
+						pages.push(subpage)
+					}
+				}
+				return pages
+			}
+		},
+
+		pagesTreeWalk: (state) => (parentId = 0) => {
+			const pages = []
+			for (const page of state.visibleSubpages(parentId)) {
+				pages.push(page)
+				for (const subpage of state.pagesTreeWalk(page.id)) {
+					pages.push(subpage)
+				}
+			}
+			return pages
+		},
+
+		pageParent: (state) => (pageId) => {
+			return state.pageById(pageId).parentId
+		},
+
+		pageParentsForCollective(state) {
+			return (collective, pageId) => {
+				const pages = []
+				while (pageId !== state.rootPage.id) {
+					const page = state.pagesForCollective(collective).find((p) => (p.id === pageId))
+					if (!page) {
+						break
+					}
+					pages.unshift(page)
+					pageId = page.parentId
+				}
+				return pages
+			}
+		},
+
+		pageParents(state) {
+			return (pageId) => {
+				const collectivesStore = useCollectivesStore()
+				return state.pageParentsForCollective(collectivesStore.currentCollective, pageId)
+			}
+		},
+
+		// Whether a page is in the subtree of another page
+		isInSubtreeOf(state) {
+			return (pageId, subtreeRootId) => state.pageParents(pageId).some((page) => page.id === subtreeRootId)
+		},
+
+		sortOrder(state) {
+			return sortOrders[state.sortByOrder] || sortOrders.byOrder
+		},
+
+		sortByDefault() {
+			const collectivesStore = useCollectivesStore()
+			if (!collectivesStore.currentCollective) {
+				return 'byOrder'
+			}
+			return sortOrders.pageOrdersByNumber[collectivesStore.currentCollective.userPageOrder]
+		},
+
+		sortByOrder(state) {
+			return state.sortBy ? state.sortBy : state.sortByDefault
+		},
+
+		disableDragndropSortOrMove(state) {
+			const rootStore = useRootStore()
+			const collectivesStore = useCollectivesStore()
+			// Disable for readonly collective
+			return !collectivesStore.currentCollectiveCanEdit
+				// Disable if a page list is loading (e.g. when page move is pending)
+				|| rootStore.loading('pagelist-nodrag')
+				// For now also disable in alternative page order view
+				// TODO: Smoothen UX if allowed to move but not to sort with alternative page orders
+				|| (state.sortByOrder !== 'byOrder')
+		},
+
+		newPageId(state) {
+			return state.newPage?.id
+		},
+
+		newPagePath(state) {
+			return state.newPage && state.pagePath(state.newPage)
+		},
+
+		pageTitle(state) {
+			const collectivesStore = useCollectivesStore()
+			return (pageId) => {
+				const page = state.pageById(pageId)
+				return (page.parentId === 0) ? collectivesStore.currentCollective.name : page.title
+			}
+		},
+
+		getTextMode: (state) => state.textMode[state.currentPageId] ?? pageModes.MODE_PREVIEW,
+		isTextEdit: (state) => state.getTextMode === pageModes.MODE_EDIT,
+		isTextPreview: (state) => state.getTextMode === pageModes.MODE_PREVIEW,
+
+		isCollapsed(state) {
+			// Default to 'true' if unset
+			return (pageId) => state.collapsed[pageId] ?? true
+		},
+
+		hasOutline(state) {
+			// Default to 'false' if unset
+			return (pageId) => state.outline[pageId] ?? false
+		},
+
+		keptSortable(state) {
+			return (pageId) => state.pageById(pageId)?.keepSortable
+		},
+
+		subpageOrder(state) {
+			return (pageId) => state.pageById(pageId).subpageOrder
+		},
+
+		subpageOrderIndex(state) {
+			return (parentId, pageId) => {
+				const parentSubpageOrder = state.subpageOrder(parentId)
+				return parentSubpageOrder.indexOf(pageId)
+			}
+		},
+
+		sortedTrashPages(state) {
+			return state.trashPages.toSorted((a, b) => b.trashTimestamp - a.trashTimestamp)
+		},
+
+		recentPages(state) {
+			return state.pages
+				.toSorted(sortOrders.byTimeAsc)
+		},
+
+		recentPagesUserIds(state) {
+			return state.recentPages
+				// take only userIds
+				.map((p) => p.lastUserId)
+				// filter out duplicates
+				.filter((value, index, array) => {
+					return array.indexOf(value) === index
+				})
+		},
+
+		backlinks(state) {
+			return (pageId) => {
+				return state.pages.filter((p) => p.linkedPageIds.includes(pageId))
+			}
+		},
+
+		// TODO: rename
+		title: (state) => {
+			const collectivesStore = useCollectivesStore()
+			return state.isLandingPage
+				? collectivesStore.currentCollective.name
+				: state.currentPage.title
+		},
+
+		isDragoverTargetPage: (state) => state.dragoverTargetPageId !== null,
+	},
+
+	actions: {
+		updateSubpageOrder({ parentId, subpageOrder }) {
+			if (this.pageById(parentId)) {
+				this.pageById(parentId).subpageOrder = subpageOrder
+			}
+		},
+
+		/**
+		 * Add pageId to subpageOrder of parent page at specified index (only in frontend store)
+		 * If no index is provided, add to the beginning of the list.
+		 *
+		 * Build subpageOrder of parent page to maintain the displayed order. If no subpageOrder
+		 * was stored before or it missed pages, pages would jump around otherwise.
+		 *
+		 * @param {object} object parameters object
+		 * @param {number} object.parentId ID of the parent page
+		 * @param {number} object.pageId ID of the page to remove
+		 * @param {number|undefined} object.newIndex New index for pageId (prepend by default)
+		 */
+		addToSubpageOrder({ parentId, pageId, newIndex = 0 }) {
+			// Get current subpage order of parentId
+			const subpageOrder = this.sortedSubpages(parentId, 'byOrder')
+				.map((p) => p.id)
+				.filter((id) => (id !== pageId))
+
+			// Add pageId to index position
+			subpageOrder.splice(newIndex, 0, pageId)
+
+			this.updateSubpageOrder({ parentId, subpageOrder })
+		},
+
+		/**
+		 * Delete pageId from subpageOrder of parent page (only in frontend store)
+		 *
+		 * @param {object} object parameters object
+		 * @param {number} object.parentId ID of the parent page
+		 * @param {number} object.pageId ID of the page to remove
+		 */
+		deleteFromSubpageOrder({ parentId, pageId }) {
+			const parentPage = this.pageById(parentId)
+			this.updateSubpageOrder({ parentId, subpageOrder: parentPage.subpageOrder.filter((id) => (id !== pageId)) })
+		},
+
+		setPageOrder(order) {
+			this.sortBy = order
+		},
+
+		setTextEdit() { this.textMode[this.currentPageId] = pageModes.MODE_EDIT },
+		setTextPreview() { this.textMode[this.currentPageId] = pageModes.MODE_PREVIEW },
+
+		toggleCollapsed(pageId) {
+			// Default to 'false' if unset
+			this.collapsed[pageId] = this.collapsed[pageId] === undefined ? false : !this.collapsed[pageId]
+		},
+		collapse(pageId) { this.collapsed[pageId] = true },
+		expand(pageId) { this.collapsed[pageId] = false },
+
+		toggleOutline(pageId) {
+			// Default to 'true' if unset
+			this.outline[pageId] = this.outline[pageId] === undefined ? true : !this.outline[pageId]
+		},
+		setOutlineForCurrentPage(visible) {
+			this.outline[this.currentPageId] = visible
+		},
+
+		expandParents(pageId) {
+			for (const page of this.pageParents(pageId)) {
+				this.expand(page.id)
+			}
+		},
+
+		// Collapse all pages of current collective except parents of current page
+		collapseAll() {
+			for (const page of this.pages) {
+				delete this.collapsed[page.id]
+			}
+			if (this.currentPage) {
+				this.expandParents(this.currentPage.parentId)
+			}
+		},
+
+		setNewPageParentId(id) {
+			this.newPageParentId = id
+		},
+
+		setDragParentPageId(pageId) {
+			this.dragParentPageId = pageId
+		},
+
+		setHighlightAnimationPageId(pageId) {
+			this.highlightAnimationPageId = pageId
+		},
+
+		setDragoverTargetPageId(pageId) {
+			this.dragoverTargetPageId = pageId
+		},
+
+		setDraggedPageId(pageId) {
+			this.draggedPageId = pageId
+		},
+
+		/**
+		 * Fetch a page list, superseding a request in flight for the same index
+		 *
+		 * @param {number|string} index Page list index
+		 * @param {object} context Context for the API request
+		 * @param {() => Promise<void>} refetch Repeats the request after invalidation
+		 */
+		async _fetchPages(index, context, refetch) {
+			pagesRequests[index]?.controller.abort()
+			const controller = new AbortController()
+			pagesRequests[index] = { controller, refetch }
+			try {
+				const response = await api.getPages(context, { signal: controller.signal })
+				this.allPages[index] = response.data.ocs.data.pages
+			} catch (e) {
+				if (!isCancel(e)) {
+					throw e
+				}
+			} finally {
+				if (pagesRequests[index]?.controller === controller) {
+					delete pagesRequests[index]
+				}
+			}
+		},
+
+		/**
+		 * Get list of all pages for a collective
+		 *
+		 * @param {object} collective The collective
+		 * @param {boolean} setLoading Whether to set loading pagelist
+		 */
+		async getPagesForCollective(collective, setLoading = true) {
+			const rootStore = useRootStore()
+			if (setLoading && this.pagesForCollective(collective).length === 0) {
+				rootStore.load(`pagelist-${collective.id}`)
+			}
+			const context = {
+				isPublic: false,
+				collectiveId: collective.id,
+				shareTokenParam: null,
+			}
+			try {
+				await this._fetchPages(
+					this.indexForCollective(collective),
+					context,
+					() => this.getPagesForCollective(collective, false),
+				)
+			} finally {
+				rootStore.done(`pagelist-${collective.id}`)
+			}
+		},
+
+		/**
+		 * Get list of all pages for current collective
+		 *
+		 * @param {boolean} setLoading Whether to set loading pagelist
+		 */
+		async getPages(setLoading = true) {
+			const rootStore = useRootStore()
+			if (setLoading && !this.pagesLoaded) {
+				rootStore.load('pagelist')
+			}
+			try {
+				await this._fetchPages(this.collectiveIndex, this.context, () => this.getPages(false))
+			} finally {
+				rootStore.done('pagelist')
+			}
+		},
+
+		/**
+		 * Discard a page list request in flight, as its response might predate a local change,
+		 * and fetch the page list again.
+		 *
+		 * @param {number|string} index Page list index
+		 */
+		invalidatePages(index = this.collectiveIndex) {
+			const request = pagesRequests[index]
+			if (request) {
+				request.controller.abort()
+				request.refetch().catch((e) => console.error('coult not refetch the page list', e))
+			}
+		},
+
+		/**
+		 * Drop the cached page list for a collective
+		 *
+		 * @param {object} collective Collective to drop the cached pages for
+		 */
+		clearPagesForCollective(collective) {
+			delete this.allPages[this.indexForCollective(collective)]
+		},
+
+		/**
+		 * Get a list of all pages in trash
+		 */
+		async getTrashPages() {
+			if (this.trashPagesLoaded) {
+				return
+			}
+
+			const rootStore = useRootStore()
+			rootStore.load('pageTrash')
+			// Remember this.collectiveIndex from before the await to avoid a race condition.
+			// Another collective may have been opened in the meantime.
+			const collectiveIndex = this.collectiveIndex
+			const response = await api.getTrashPages(this.context)
+			this.allTrashPages[collectiveIndex] = response.data.ocs.data.pages
+			// the flag is not per collective, so only set it for the current one
+			if (collectiveIndex === this.collectiveIndex) {
+				this.setTrashPagesLoaded(true)
+			}
+			rootStore.done('pageTrash')
+		},
+
+		setTrashPagesLoaded(loaded) {
+			this.trashPagesLoaded = loaded
+		},
+
+		_updatePageState(page, collectiveIndex = this.collectiveIndex) {
+			this.invalidatePages(collectiveIndex)
+			const index = this.allPages[collectiveIndex].findIndex((p) => p.id === page.id)
+			if (index > -1) {
+				this.allPages[collectiveIndex].splice(index, 1, page)
+			}
+		},
+
+		/**
+		 * Get a single page and update it in the store
+		 *
+		 * @param {number} pageId Page ID
+		 */
+		async getPage(pageId) {
+			const response = await api.getPage(this.context, pageId)
+			this._updatePageState(response.data.ocs.data.page)
+		},
+
+		/**
+		 * Create a new page
+		 *
+		 * @param {object} page Properties for the new page (title for now)
+		 */
+		async createPage(page) {
+			const rootStore = useRootStore()
+			// Will be done when the title form has focus.
+			rootStore.load('newPageTitle')
+			// Will be done when the editor is loaded.
+			rootStore.load('newPageContent')
+
+			const response = await api.createPage(this.context, page)
+			this.invalidatePages()
+			// Add new page to the beginning of pages array
+			const newPage = response.data.ocs.data.page
+			updateOrAddTo(this.allPages[this.collectiveIndex], newPage)
+			this.addToSubpageOrder({ parentId: newPage.parentId, pageId: newPage.id })
+			this.newPage = response.data.ocs.data.page
+		},
+
+		/**
+		 * Touch current page
+		 */
+		async touchPage() {
+			const response = await api.touchPage(this.context, this.currentPageId)
+			this._updatePageState(response.data.ocs.data.page)
+		},
+
+		/**
+		 * Rename the current page
+		 *
+		 * @param {string} newTitle new title for the page
+		 */
+		async renamePage(newTitle) {
+			const response = await api.renamePage(this.context, this.currentPageId, newTitle)
+			this._updatePageState(response.data.ocs.data.page)
+		},
+
+		/**
+		 * Copy page to another parent
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.newParentId ID of the new parent page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} page.index index for subpageOrder of parent page
+		 */
+		async copyPage({ newParentId, pageId, index }) {
+			const rootStore = useRootStore()
+			rootStore.load('pagelist-nodrag')
+			const page = { ...this.pageById(pageId) }
+
+			// Keep subpage list of old parent page in DOM to prevent a race condition with sortableJS
+			const oldParentId = page.parentId
+
+			// Increment index by one if copying to same folder with an index after the original
+			if (oldParentId === newParentId && index >= this.subpageOrderIndex(newParentId, pageId)) {
+				index += 1
+			}
+
+			try {
+				await api.copyPage(this.context, pageId, newParentId, index)
+				// Reload the page list to make new page appear
+				await this.getPages(false)
+			} finally {
+				rootStore.done('pagelist-nodrag')
+			}
+		},
+
+		/**
+		 * Move page to another parent
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.newParentId ID of the new parent page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} page.index index for subpageOrder of parent page
+		 */
+		async movePage({ newParentId, pageId, index }) {
+			const rootStore = useRootStore()
+			rootStore.load('pagelist-nodrag')
+			const page = { ...this.pageById(pageId) }
+			const hasSubpages = this.visibleSubpages(pageId).length > 0
+
+			// Save a clone of the page to restore in case of errors
+			const pageClone = { ...page }
+
+			// Keep subpage list of old parent page in DOM to prevent a race condition with sortableJS
+			const oldParentId = page.parentId
+			this.pageById(oldParentId).keepSortable = true
+
+			// Update page in store first to avoid page order jumping around
+			page.parentId = newParentId
+			this._updatePageState(page)
+
+			try {
+				const response = await api.movePage(this.context, pageId, newParentId, index)
+				this._updatePageState(response.data.ocs.data.page)
+			} catch (e) {
+				this._updatePageState(pageClone)
+				throw e
+			} finally {
+				delete this.pageById(oldParentId).keepSortable
+				rootStore.done('pagelist-nodrag')
+			}
+
+			// Reload the page list if moved page had subpages (to get their updated paths)
+			if (hasSubpages) {
+				await this.getPages(false)
+			}
+		},
+
+		/**
+		 * Copy page to another collective
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.collectiveId ID of the new collective
+		 * @param {number} page.newParentId ID of the new parent page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} page.index index for subpageOrder of parent page
+		 */
+		async copyPageToCollective({ collectiveId, newParentId, pageId, index }) {
+			const rootStore = useRootStore()
+			rootStore.load('pagelist-nodrag')
+
+			await api.copyPageToCollective(this.context, pageId, collectiveId, newParentId, index)
+			rootStore.done('pagelist-nodrag')
+		},
+
+		/**
+		 * Move page to another collective
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.collectiveId ID of the new collective
+		 * @param {number} page.newParentId ID of the new parent page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} page.index index for subpageOrder of parent page
+		 */
+		async movePageToCollective({ collectiveId, newParentId, pageId, index }) {
+			const rootStore = useRootStore()
+			rootStore.load('pagelist-nodrag')
+			const page = { ...this.pageById(pageId) }
+			const hasSubpages = this.visibleSubpages(pageId).length > 0
+
+			await api.movePageToCollective(this.context, pageId, collectiveId, newParentId, index)
+			this.invalidatePages()
+			removeFrom(this.allPages[this.collectiveIndex], page)
+			rootStore.done('pagelist-nodrag')
+
+			// Reload the page list if moved page had subpages (to remove subpages as well)
+			if (hasSubpages) {
+				await this.getPages(false)
+			}
+		},
+
+		/**
+		 * Set emoji for a page
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 * @param {string} page.emoji emoji for the page
+		 */
+		async setPageEmoji({ pageId, emoji }) {
+			const rootStore = useRootStore()
+			rootStore.load(`pageEmoji-${pageId}`)
+			try {
+				const response = await api.setPageEmoji(this.context, pageId, emoji)
+				this._updatePageState(response.data.ocs.data.page)
+			} finally {
+				rootStore.done(`pageEmoji-${pageId}`)
+			}
+		},
+
+		/**
+		 * Set full width for a page
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 * @param {boolean} page.fullWidthView emoji for the page
+		 */
+		async setFullWidthView({ pageId, fullWidthView }) {
+			const response = await api.setFullWidth(this.context, pageId, fullWidthView)
+			this._updatePageState(response.data.ocs.data.page)
+		},
+
+		/**
+		 * Set subpageOrder for a page
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 * @param {Array} page.subpageOrder subpage order for the page
+		 */
+		async setPageSubpageOrder({ pageId, subpageOrder }) {
+			const rootStore = useRootStore()
+			rootStore.load('pagelist-nodrag')
+			const page = { ...this.pageById(pageId) }
+
+			// Save a clone of the page to restore in case of errors
+			const pageClone = { ...page }
+
+			// Update page in store first to avoid page order jumping around
+			page.subpageOrder = subpageOrder
+			this._updatePageState(page)
+
+			try {
+				const response = await api.setPageSubpageOrder(
+					this.context,
+					pageId,
+					JSON.stringify(subpageOrder),
+				)
+				this._updatePageState(response.data.ocs.data.page)
+			} catch (e) {
+				this._updatePageState(pageClone)
+				throw e
+			} finally {
+				rootStore.done('pagelist-nodrag')
+			}
+		},
+
+		/**
+		 * Add a tag to a page
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} tagId ID of the tag
+		 */
+		async addPageTag({ pageId }, tagId) {
+			const rootStore = useRootStore()
+			const page = { ...this.pageById(pageId) }
+
+			if (page.tags?.includes(tagId)) {
+				return
+			}
+
+			rootStore.load(`page-tag-${pageId}-${tagId}`)
+
+			// Save a clone of the tags to restore in case of errors
+			const tagsClone = [...page.tags]
+
+			// Update page in store first
+			page.tags.push(tagId)
+			this._updatePageState(page)
+
+			try {
+				const response = await api.addPageTag(
+					this.context,
+					pageId,
+					tagId,
+				)
+				this._updatePageState(response.data.ocs.data.page)
+			} catch (e) {
+				page.tags = tagsClone
+				this._updatePageState(page)
+				throw e
+			} finally {
+				rootStore.done(`page-tag-${pageId}-${tagId}`)
+			}
+		},
+
+		/**
+		 * Remove a tag from a page
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 * @param {number} tagId ID of the tag
+		 */
+		async removePageTag({ pageId }, tagId) {
+			const rootStore = useRootStore()
+			const page = { ...this.pageById(pageId) }
+
+			const tagIndex = page.tags?.indexOf(tagId)
+			if (tagIndex === null || tagIndex === -1) {
+				return
+			}
+
+			rootStore.load(`page-tag-${pageId}-${tagId}`)
+
+			// Save a clone of the tags to restore in case of errors
+			const tagsClone = [...page.tags]
+
+			// Update page in store first
+			page.tags.splice(tagIndex, 1)
+			this._updatePageState(page)
+
+			try {
+				const response = await api.removePageTag(
+					this.context,
+					pageId,
+					tagId,
+				)
+				this._updatePageState(response.data.ocs.data.page)
+			} catch (e) {
+				page.tags = tagsClone
+				this._updatePageState(page)
+				throw e
+			} finally {
+				rootStore.done(`page-tag-${pageId}-${tagId}`)
+			}
+		},
+
+		/**
+		 * Trash the page with the given id
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page
+		 */
+		async trashPage({ pageId }) {
+			const response = await api.trashPage(this.context, pageId)
+			this.invalidatePages()
+			const trashPage = response.data.ocs.data.page
+			removeFrom(this.allPages[this.collectiveIndex], trashPage)
+			if (this.allTrashPages[this.collectiveIndex]) {
+				updateOrAddTo(this.allTrashPages[this.collectiveIndex], trashPage)
+			}
+		},
+
+		/**
+		 * Restore the page with the given id from trash
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page to restore
+		 */
+		async restorePage({ pageId }) {
+			const response = await api.restorePage(this.context, pageId)
+			this.invalidatePages()
+			const trashPage = response.data.ocs.data.page
+			updateOrAddTo(this.allPages[this.collectiveIndex], trashPage)
+			removeFrom(this.allTrashPages[this.collectiveIndex], trashPage)
+		},
+
+		/**
+		 * Delete the page with the given id from trash
+		 *
+		 * @param {object} page the page
+		 * @param {number} page.pageId ID of the page to delete
+		 */
+		async deletePage({ pageId }) {
+			await api.deletePage(this.context, pageId)
+			removeFrom(this.allTrashPages[this.collectiveIndex], { id: pageId })
+		},
+
+		/**
+		 * Update all pages provided, remove those listed as removed
+		 *
+		 * @param {number} collectiveId ID of the collective to work on
+		 * @param {object} changes the page
+		 * @param {object[]} changes.pages updated records for pages
+		 * @param {number[]} changes.removed ids of all pages that were removed entirely
+		 */
+		updatePages(collectiveId, { pages, removed }) {
+			if (collectiveId !== this.collectiveId) {
+				// only handle changes to the current collective
+				return
+			}
+			this.invalidatePages()
+			for (const page of (pages || [])) {
+				if (page.filePath === TEMPLATE_PATH || page.filePath.startsWith(TEMPLATE_PATH + '/')) {
+					// template pages are handled in the ... templates store.
+					continue
+				}
+				if (page.trashTimestamp) {
+					// pages should not be updated in the trash - but better be safe than sorry.
+					updateOrAddTo(this.allTrashPages[this.collectiveIndex], page)
+					removeFrom(this.allPages[this.collectiveIndex], page)
+				} else {
+					updateOrAddTo(this.allPages[this.collectiveIndex], page)
+					removeFrom(this.allTrashPages[this.collectiveIndex], page)
+				}
+			}
+			for (const id of (removed || [])) {
+				removeFrom(this.allTrashPages[this.collectiveIndex], { id })
+				removeFrom(this.allPages[this.collectiveIndex], { id })
+			}
+		},
+
+		/**
+		 * Get list of attachments for a page
+		 *
+		 * @param {object} page Page to get attachments for
+		 */
+		async getAttachments(page) {
+			// Remember this.collectiveIndex from before the await to avoid a race condition.
+			// Another collective may have been opened in the meantime.
+			const collectiveIndex = this.collectiveIndex
+			const response = await api.getPageAttachments(this.context, page.id)
+			if (typeof this.allAttachments[collectiveIndex] !== 'object') {
+				this.allAttachments[collectiveIndex] = {}
+			}
+			this.allAttachments[collectiveIndex][page.id] = response.data.ocs.data.attachments
+				// Disregard deletedAttachments when updating attachments
+				.filter((a) => !this.deletedAttachments.map((a) => a.name).includes(a.name))
+			this.deletedAttachments = this.deletedAttachments
+				// Only keep deletedAttachments that still exist
+				.filter((a) => this.attachments.map((a) => a.name).includes(a.name))
+		},
+
+		async uploadAttachment(file, onProgress) {
+			const formData = new FormData()
+			formData.append('file', file)
+
+			const response = await api.uploadAttachment(this.context, this.currentPageId, formData, onProgress)
+			if (typeof this.allAttachments[this.collectiveIndex] !== 'object') {
+				this.allAttachments[this.collectiveIndex] = {}
+			}
+			if (!Array.isArray(this.allAttachments[this.collectiveIndex][this.currentPageId])) {
+				this.allAttachments[this.collectiveIndex][this.currentPageId] = []
+			}
+			this.allAttachments[this.collectiveIndex][this.currentPageId].push(response.data.ocs.data.attachment)
+			return response.data.ocs.data.attachment
+		},
+
+		/**
+		 * Rename an attachment of a page
+		 *
+		 * @param {number} attachmentId ID of the attachment to delete
+		 * @param {string} name - Target name of the attachment
+		 */
+		async renameAttachment(attachmentId, name) {
+			const response = await api.renameAttachment(this.context, this.currentPageId, attachmentId, name)
+			const index = this.attachments.findIndex((a) => a.id === attachmentId)
+			this.allAttachments[this.collectiveIndex][this.currentPageId].splice(index, 1, response.data.ocs.data.attachment)
+			return response.data.ocs.data.attachment
+		},
+
+		/**
+		 * Delete an attachment of a page
+		 *
+		 * @param {number} attachmentId ID of the attachment to delete
+		 */
+		async deleteAttachment(attachmentId) {
+			await api.deleteAttachment(this.context, this.currentPageId, attachmentId)
+			this.setAttachmentDeleted(attachmentId)
+		},
+
+		/**
+		 * Restore an attachment of a page from trash
+		 *
+		 * @param {number} attachmentId ID of the attachment to restore
+		 */
+		async restoreAttachment(attachmentId) {
+			const response = await api.restoreAttachment(this.context, this.currentPageId, attachmentId)
+			this.setAttachmentUndeleted(attachmentId, response.data.ocs.data.attachment)
+		},
+
+		setAttachmentDeleted(attachmentId) {
+			const index = this.attachments.findIndex((a) => a.id === attachmentId)
+			if (index !== -1) {
+				const [attachment] = this.allAttachments[this.collectiveIndex][this.currentPageId].splice(index, 1)
+				this.deletedAttachments.push(attachment)
+			}
+		},
+
+		setAttachmentUndeleted(attachmentId, restoredAttachment) {
+			const index = this.deletedAttachments.findIndex((a) => a.id === attachmentId)
+			if (index !== -1) {
+				this.deletedAttachments.splice(index, 1)
+				this.allAttachments[this.collectiveIndex][this.currentPageId].push(restoredAttachment)
+			}
+		},
+
+		setAttachmentsLoaded(loaded) {
+			this.attachmentsLoaded = loaded
+		},
+
+		setAttachmentsError(error) {
+			this.attachmentsError = error
+		},
+
+		setEditorEmbeddedAttachmentSrcs(attachmentSrcs) {
+			this.editorEmbeddedAttachmentSrcs = attachmentSrcs
+		},
+
+		setReaderEmbeddedAttachmentSrcs(attachmentSrcs) {
+			this.readerEmbeddedAttachmentSrcs = attachmentSrcs
+		},
+
+		/**
+		 *
+		 * @param {string} searchString - Content search string
+		 */
+		async contentSearch(searchString) {
+			return await api.contentSearch(this.context, searchString)
+		},
+	},
+})

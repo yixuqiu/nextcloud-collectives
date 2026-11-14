@@ -1,14 +1,20 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div v-if="active" class="filelist-collectives-wrapper">
 		<div class="infobox">
-			<InformationIcon fill-color="var(--color-primary-element)" />
+			<InformationIcon fillColor="var(--color-primary-element)" />
 
 			<div class="content">
 				{{ t('collectives', 'The content of this folder is best viewed in the Collectives app.') }}
 
 				<a :href="collectivesLink">
-					<NcButton :aria-label="t('collectives', 'Open in Collectives')"
-						type="primary"
+					<NcButton
+						:aria-label="t('collectives', 'Open in Collectives')"
+						variant="primary"
 						class="button">
 						{{ t('collectives', 'Open in Collectives') }}
 					</NcButton>
@@ -19,10 +25,13 @@
 </template>
 
 <script>
+import { loadState } from '@nextcloud/initial-state'
+import { t } from '@nextcloud/l10n'
 import { generateUrl } from '@nextcloud/router'
-// As it's the only nextcloud-vue component used in collectives-files.js, import it separately to keep asset small
-import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
-import InformationIcon from 'vue-material-design-icons/Information.vue'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import InformationIcon from 'vue-material-design-icons/InformationOutline.vue'
+
+const collectivesFolder = loadState('collectives', 'user_folder', null)
 
 export default {
 	name: 'FileListInfo',
@@ -33,34 +42,37 @@ export default {
 	},
 
 	props: {
-		collectivesFolder: {
-			type: String,
-			required: true,
-		},
 		path: {
 			type: String,
 			required: true,
 		},
 	},
 
+	expose: ['setPath'],
+
 	data() {
 		return {
+			internalPath: this.path,
 			active: false,
 		}
 	},
 
 	computed: {
 		collectivesLink() {
-			const collectivesPath = this.path.startsWith(this.collectivesFolder)
-				? this.path.slice(this.collectivesFolder.length)
+			let collectivesPath = this.internalPath.startsWith(collectivesFolder)
+				? this.internalPath.slice(collectivesFolder.length)
 				: ''
+
+			// strip `/.attachments.<fileId>` suffix if present
+			collectivesPath = collectivesPath.replace(/\/\.attachments\.\d+$/, '')
+
 			return generateUrl('/apps/collectives' + collectivesPath)
 		},
 	},
 
 	watch: {
-		'path'() {
-			this.setActive()
+		path: function() {
+			this.setPath(this.path)
 		},
 	},
 
@@ -69,8 +81,15 @@ export default {
 	},
 
 	methods: {
+		t,
+
+		setPath(path) {
+			this.internalPath = path
+			this.setActive()
+		},
+
 		setActive() {
-			this.active = this.collectivesFolder && this.collectivesFolder !== '/' && this.path.startsWith(this.collectivesFolder)
+			this.active = collectivesFolder && collectivesFolder !== '/' && this.internalPath.startsWith(collectivesFolder)
 		},
 	},
 }
@@ -91,12 +110,12 @@ export default {
 		justify-content: flex-start;
 
 		background-color: var(--color-background-hover);
-		border-left-color: var(--color-primary-element);
+		border-inline-start-color: var(--color-primary-element);
 		border-radius: var(--border-radius);
 		padding: 1em;
-		padding-left: 0.5em;
-		border-left-width: 0.3em;
-		border-left-style: solid;
+		padding-inline-start: 0.5em;
+		border-inline-start-width: 0.3em;
+		border-inline-start-style: solid;
 		margin-bottom: 0.5em;
 
 		.content {
@@ -104,11 +123,11 @@ export default {
 			align-items: center;
 			justify-content: flex-start;
 
-			margin-left: 1em;
+			margin-inline-start: 1em;
 			margin-bottom: 0;
 
 			.button {
-				margin-left: 12px;
+				margin-inline-start: 12px;
 			}
 		}
 	}

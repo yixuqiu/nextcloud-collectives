@@ -1,4 +1,10 @@
-import { showWarning, showError } from '@nextcloud/dialogs'
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import { showError, showWarning } from '@nextcloud/dialogs'
+import { t } from '@nextcloud/l10n'
 import escapeHtml from 'escape-html'
 
 /**
@@ -7,7 +13,7 @@ import escapeHtml from 'escape-html'
  */
 function content(msg, details) {
 	return details
-		? `<div>${escapeHtml(msg)}</div><div>${escapeHtml(details)}</div>`
+		? `<div>${escapeHtml(msg)}:&nbsp;</div><div>${escapeHtml(details)}</div>`
 		: msg
 }
 
@@ -25,7 +31,7 @@ function options(details) {
  * @param {Error} e request exception from axios
  */
 function showRequestException(msg, e) {
-	const details = e.response && e.response.data
+	const details = e.response?.data?.ocs?.meta?.message
 	if (e.response && e.response.status < 500) {
 		showWarning(content(msg, details), options(details))
 	} else {
@@ -39,8 +45,7 @@ function showRequestException(msg, e) {
  * alongside the error itself.
  *
  * @param {string} msg translation key for the error message
- * @return {Function} error handler function
  */
 export default function(msg) {
-	return e => showRequestException(t('collectives', msg), e)
+	return (e) => showRequestException(t('collectives', msg), e)
 }

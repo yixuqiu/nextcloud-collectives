@@ -1,5 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Db;
 
 use OCA\Collectives\Db\Collective;
@@ -8,13 +15,14 @@ use OCA\Collectives\Db\CollectiveUserSettingsMapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
-use PHPUnit\Framework\TestCase;
+use Test\TestCase;
 
 class CollectiveUserSettingsMapperTest extends TestCase {
 	private IQueryBuilder $qb;
 	private CollectiveUserSettingsMapper $mapper;
 
 	public function setUp(): void {
+		parent::setUp();
 		$expr = $this->getMockBuilder(IExpressionBuilder::class)
 			->disableOriginalConstructor()
 			->getMock();

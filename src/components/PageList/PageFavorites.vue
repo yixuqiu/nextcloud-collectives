@@ -1,0 +1,161 @@
+<!--
+  - SPDX-FileCopyrightText: 2024 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<template>
+	<div class="page-list-favorites">
+		<div class="app-content-list-item">
+			<div class="app-content-list-item-icon" @click="toggleFavorites">
+				<StarIcon :size="22" fillColor="var(--color-main-text)" />
+			</div>
+			<div class="app-content-list-item-line-one" @click="toggleFavorites">
+				{{ t('collectives', 'Favorites') }}
+				<NcButton
+					:aria-label="t('collectives', 'Toggle favorites')"
+					variant="tertiary"
+					class="toggle-favorites-button">
+					<template #icon>
+						<ChevronDownIcon
+							:size="22"
+							:class="{ collapsed: !showFavoritesOpen }" />
+					</template>
+				</NcButton>
+			</div>
+		</div>
+
+		<div v-show="showFavoritesOpen" class="page-list-favorites-list">
+			<PageListItem
+				v-for="page in favoritePages"
+				:key="page.id"
+				:to="pagePath(page)"
+				:pageId="page.id"
+				:parentId="page.parentId"
+				:title="page.title"
+				:timestamp="page.timestamp"
+				:lastUserId="page.lastUserId"
+				:lastUserDisplayName="page.lastUserDisplayName"
+				:emoji="page.emoji"
+				:level="2"
+				:canEdit="currentCollectiveCanEdit"
+				inFavoriteList
+				:networkOnline />
+		</div>
+	</div>
+</template>
+
+<script>
+import { t } from '@nextcloud/l10n'
+import { mapState } from 'pinia'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import ChevronDownIcon from 'vue-material-design-icons/ChevronDown.vue'
+import StarIcon from 'vue-material-design-icons/StarOutline.vue'
+import PageListItem from './PageListItem.vue'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+
+export default {
+	name: 'PageFavorites',
+
+	components: {
+		PageListItem,
+		NcButton,
+		ChevronDownIcon,
+		StarIcon,
+	},
+
+	props: {
+		networkOnline: {
+			type: Boolean,
+			required: true,
+		},
+	},
+
+	data() {
+		return {
+			showFavoritesOpen: true,
+		}
+	},
+
+	computed: {
+		...mapState(useCollectivesStore, [
+			'currentCollectiveCanEdit',
+		]),
+
+		...mapState(usePagesStore, [
+			'favoritePages',
+			'pagePath',
+		]),
+	},
+
+	methods: {
+		t,
+
+		toggleFavorites() {
+			this.showFavoritesOpen = !this.showFavoritesOpen
+		},
+	},
+}
+</script>
+
+<style scoped lang="scss">
+.page-list-favorites {
+	border-bottom: 1px solid var(--color-border);
+
+	.page-list-favorites-list {
+		padding-left: 20px;
+	}
+}
+
+.app-content-list-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	height: var(--default-clickable-area);
+	margin-bottom: 4px;
+	padding: 0;
+	border-radius: var(--border-radius-large);
+
+	&:hover, &:focus, &:active, &.highlight {
+		background-color: var(--color-background-hover);
+
+		span.item-icon-badge {
+			background-color: var(--color-background-hover);
+		}
+
+		span.item-icon-favorite {
+			background-color: var(--color-background-hover);
+		}
+	}
+
+	.app-content-list-item-icon {
+		display: flex;
+		flex: 0 0 var(--default-clickable-area);
+		justify-content: center;
+		align-items: center;
+		width: var(--default-clickable-area);
+
+		.material-design-icon {
+			cursor: pointer;
+		}
+	}
+
+	.app-content-list-item-line-one {
+		display: flex;
+		flex-grow: 1;
+	}
+
+	.toggle-favorites-button {
+		position: absolute;
+		top: 0;
+		right: 0;
+		width: 34px;
+
+		.collapsed {
+			transition: transform var(--animation-slow);
+			transform: rotate(-90deg);
+		}
+	}
+}
+</style>

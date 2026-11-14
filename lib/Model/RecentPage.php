@@ -1,21 +1,28 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Model;
 
 class RecentPage {
-	protected string $collectiveName = '';
+	protected string $collectiveNameWithEmoji = '';
 	protected string $pagePath = '';
 	protected string $pageUrl = '';
 	protected string $title = '';
 	protected string $emoji = '';
 	protected int $timestamp = 0;
 
-	public function getCollectiveName(): string {
-		return $this->collectiveName;
+	public function getCollectiveNameWithEmoji(): string {
+		return $this->collectiveNameWithEmoji;
 	}
 
-	public function setCollectiveName(string $collectiveName): self {
-		$this->collectiveName = $collectiveName;
+	public function setCollectiveNameWithEmoji(string $collectiveNameWithEmoji): self {
+		$this->collectiveNameWithEmoji = $collectiveNameWithEmoji;
 		return $this;
 	}
 

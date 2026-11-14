@@ -2,79 +2,96 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Controller;
 
+use OCA\Collectives\Model\PageInfo;
+use OCA\Collectives\ResponseDefinitions;
 use OCA\Collectives\Service\PageService;
-use OCP\AppFramework\Controller;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\AppFramework\OCS\OCSForbiddenException;
+use OCP\AppFramework\OCS\OCSNotFoundException;
+use OCP\AppFramework\OCSController;
 use OCP\IRequest;
-use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
-class PageTrashController extends Controller {
-	private IUserSession $userSession;
+/**
+ * Provides access to page trash of a collective.
+ *
+ * @psalm-import-type CollectivesPageInfo from ResponseDefinitions
+ */
+class PageTrashController extends OCSController {
+	use OCSExceptionHelper;
+	use UserTrait;
 
-	use ErrorHelper;
-
-	public function __construct(string            $appName,
-		IRequest          $request,
-		private PageService       $service,
-		IUserSession      $userSession,
-		private LoggerInterface   $logger) {
+	public function __construct(
+		string $appName,
+		IRequest $request,
+		private PageService $service,
+		private LoggerInterface $logger,
+		private ?string $userId,
+	) {
 		parent::__construct($appName, $request);
-		$this->userSession = $userSession;
 	}
 
 	/**
-	 * @return string
-	 */
-	private function getUserId(): string {
-		return $this->userSession->getUser()->getUID();
-	}
-
-	/**
-	 * @NoAdminRequired
+	 * Get trashed pages of a collective
 	 *
+	 * @param int $collectiveId ID of the collective
 	 *
-	 * @return DataResponse
+	 * @return DataResponse<Http::STATUS_OK, array{pages: list<CollectivesPageInfo>}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective not found
+	 *
+	 * 200: Trashed pages returned
 	 */
+	#[NoAdminRequired]
 	public function index(int $collectiveId): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId): array {
-			$userId = $this->getUserId();
-			$pageInfos = $this->service->findAllTrash($collectiveId, $userId);
-			return [
-				"data" => $pageInfos
-			];
-		}, $this->logger);
+		$pageInfos = $this->handleErrorResponse(fn (): array => $this->service->findAllTrash($collectiveId, $this->getUid()), $this->logger);
+		return new DataResponse(['pages' => $pageInfos]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Restore a page from trash
 	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the trashed page
 	 *
-	 * @return DataResponse
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Trashed page restored
 	 */
+	#[NoAdminRequired]
 	public function restore(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->restore($collectiveId, $id, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->restore($collectiveId, $id, $this->getUid()), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Permanently delete a page from trash
 	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the trashed page
 	 *
-	 * @return DataResponse
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Trashed page deleted
 	 */
+	#[NoAdminRequired]
 	public function delete(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$this->service->delete($collectiveId, $id, $userId);
-			return [];
+		$this->handleErrorResponse(function () use ($collectiveId, $id): void {
+			$this->service->delete($collectiveId, $id, $this->getUid());
 		}, $this->logger);
+		return new DataResponse([]);
 	}
 }

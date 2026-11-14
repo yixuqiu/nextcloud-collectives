@@ -1,29 +1,47 @@
-<template>
-	<NcModal @close="onClose">
-		<div class="modal-content">
-			<div class="modal-collective-wrapper">
-				<h2 class="modal-collective-title">
-					{{ t('collectives', 'Members of collective {name}', { name: collective.name }) }}
-				</h2>
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 
-				<div class="modal-collective-members">
-					<MemberPicker :show-current="true"
-						:circle-id="collective.circleId"
-						:current-user-is-admin="currentUserIsAdmin"
-						:current-members="circleMembersSorted(collective.circleId)"
-						:on-click-searched="onClickSearched" />
-				</div>
-			</div>
+<template>
+	<NcModal
+		size="normal"
+		class="collective-members-modal"
+		@close="onClose">
+		<div class="modal-collective-members">
+			<h2 class="modal-collective-members__name">
+				{{ t('collectives', 'Members of collective {name}', { name: collective.name }, { escape: false }) }}
+				<a
+					v-if="showTeamLink"
+					class="team-link"
+					:href="teamUrl"
+					:title="t('collectives', 'Go to team overview')"
+					target="_blank">
+					<OpenInNewIcon :size="20" />
+				</a>
+			</h2>
+			<MemberPicker
+				showCurrent
+				:circleId="collective.circleId"
+				:currentUserIsAdmin
+				:currentMembers="circleMembersSorted(collective.circleId)"
+				:isLoading="isLoadingMembers"
+				:onClickSearched />
 		</div>
 	</NcModal>
 </template>
 
 <script>
-import { mapActions, mapGetters, mapMutations } from 'vuex'
-import { autocompleteSourcesToCircleMemberTypes, circlesMemberTypes } from '../../constants.js'
-import { GET_CIRCLE_MEMBERS, ADD_MEMBER_TO_CIRCLE } from '../../store/actions.js'
-import { NcModal } from '@nextcloud/vue'
+import { t } from '@nextcloud/l10n'
+import { generateUrl } from '@nextcloud/router'
+import { mapActions, mapState } from 'pinia'
+import NcModal from '@nextcloud/vue/components/NcModal'
+import OpenInNewIcon from 'vue-material-design-icons/OpenInNew.vue'
 import MemberPicker from '../Member/MemberPicker.vue'
+import { autocompleteSourcesToCircleMemberTypes, circlesMemberTypes } from '../../constants.js'
+import { useCirclesStore } from '../../stores/circles.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'CollectiveMembersModal',
@@ -31,6 +49,7 @@ export default {
 	components: {
 		MemberPicker,
 		NcModal,
+		OpenInNewIcon,
 	},
 
 	props: {
@@ -40,36 +59,44 @@ export default {
 		},
 	},
 
-	data() {
-		return {
-			loading: false,
-		}
-	},
+	emits: [
+		'close',
+	],
 
 	computed: {
-		...mapGetters([
-			'circleMembersSorted',
-			'isCollectiveAdmin',
-		]),
+		...mapState(useCirclesStore, ['circleMembersSorted', 'circleMembersFullyLoaded']),
+		...mapState(useCollectivesStore, ['isCollectiveAdmin']),
+		...mapState(useRootStore, ['isPublic']),
 
 		currentUserIsAdmin() {
 			return this.isCollectiveAdmin(this.collective)
 		},
+
+		teamUrl() {
+			return generateUrl('/apps/contacts/circle/{teamId}', { teamId: this.collective.circleId })
+		},
+
+		hasContactsApp() {
+			return 'contacts' in window.OC.appswebroots
+		},
+
+		showTeamLink() {
+			return this.hasContactsApp && !this.isPublic
+		},
+
+		isLoadingMembers() {
+			return !this.circleMembersFullyLoaded(this.collective.circleId)
+		},
 	},
 
 	beforeMount() {
-		this.dispatchGetCircleMembers(this.collective.circleId)
+		this.getCircleMembers(this.collective.circleId)
 	},
 
 	methods: {
-		...mapMutations([
-			'setMembersCollectiveId',
-		]),
+		t,
 
-		...mapActions({
-			dispatchGetCircleMembers: GET_CIRCLE_MEMBERS,
-			dispatchAddMemberToCircle: ADD_MEMBER_TO_CIRCLE,
-		}),
+		...mapActions(useCirclesStore, ['getCircleMembers', 'addMemberToCircle']),
 
 		onClose() {
 			this.$emit('close')
@@ -80,39 +107,65 @@ export default {
 				return
 			}
 
-			await this.dispatchAddMemberToCircle({
+			await this.addMemberToCircle({
 				circleId: this.collective.circleId,
 				userId: member.id,
 				type: circlesMemberTypes[autocompleteSourcesToCircleMemberTypes[member.source]],
 			})
-			await this.dispatchGetCircleMembers(this.collective.circleId)
 		},
 	},
 }
 </script>
 
 <style lang="scss" scoped>
-.modal-content {
-	display: flex;
-	flex-direction: column;
-	box-sizing: border-box;
-	width: 100%;
-	height: 100%;
-	padding: 16px;
-	padding-bottom: 18px;
-}
+.collective-members-modal {
+	:deep(.modal-wrapper .modal-container) {
+		display: flex !important;
+		padding-block: 4px 0;
+		padding-inline: 12px;
+	}
 
-.modal-collective-wrapper {
-	display: flex;
-	flex-direction: column;
-	width: 100%;
-	height: 550px;
-	max-height: 80vh;
+	:deep(.modal-wrapper .modal-container__content) {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
 }
 
 .modal-collective-members {
-	// Full height minus search field
-	// Required for sticky search field
-	height: calc(100% - 30px);
+	height: 550px;
+	max-height: 80vh;
+
+	// Rules are mostly copied from NcDialog:
+	&__name {
+		font-size: 21px;
+		text-align: center;
+		line-height: var(--default-clickable-area);
+		min-height: var(--default-clickable-area);
+		overflow-wrap: break-word;
+		margin-block: 0 12px;
+		padding-inline: var(--default-clickable-area);
+
+		&:hover .team-link,
+		&:hover .material-design-icon {
+			color: var(--color-primary-element);
+			transition: color var(--animation-quick) ease;
+		}
+	}
+}
+
+.team-link {
+	color: var(--color-main-text);
+
+	.material-design-icon {
+		display: inline;
+		vertical-align: middle;
+		color: var(--color-text-maxcontrast);
+	}
+
+	&:focus-visible {
+		outline: 2px solid var(--color-main-text);
+		border-radius: var(--border-radius-small);
+	}
 }
 </style>

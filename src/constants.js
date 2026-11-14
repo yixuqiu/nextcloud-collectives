@@ -1,4 +1,14 @@
-// Circle lember levels
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+export const INDEX_PAGE = 'Readme'
+export const TEMPLATE_PAGE = 'Template'
+export const PAGE_SUFFIX = '.md'
+export const TEMPLATE_PATH = '.templates'
+
+// Circle member levels
 export const memberLevels = {
 	LEVEL_MEMBER: 1,
 	LEVEL_MODERATOR: 4,
@@ -31,8 +41,22 @@ export const shareTypes = {
 
 // Page modes
 export const pageModes = {
-	MODE_VIEW: 0,
+	MODE_PREVIEW: 0,
 	MODE_EDIT: 1,
 }
 
+// Circle members
+export const CIRCLE_MEMBERS_PARTIAL_LIMIT = 15
+
+// Notification levels
+export const notifyLevels = {
+	NOTIFY_OFF: 0,
+	NOTIFY_MENTION: 1,
+	NOTIFY_ALL: 2,
+}
+
 export const editorApiReaderFileId = 'READER_FILE_ID'
+export const editorApiUpdateReadonlyBarProps = 'UPDATE_READONLY_BAR_PROPS'
+export const editorApiAttachments = 'ATTACHMENTS'
+
+export const sessionUpdateInterval = 90 // in seconds

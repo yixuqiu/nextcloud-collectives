@@ -2,25 +2,32 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Command;
 
-use OC\Core\Command\Base;
 use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Service\CollectiveService;
 use OCP\IUserManager;
 use OCP\IUserSession;
 use OCP\L10N\IFactory;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class CreateCollective extends Base {
-	public function __construct(private CollectiveService $collectiveService,
-		private NodeHelper $nodeHelper,
-		private IUserManager $userManager,
-		private IUserSession $userSession,
-		private IFactory $l10nFactory) {
+class CreateCollective extends Command {
+	public function __construct(
+		private readonly CollectiveService $collectiveService,
+		private readonly NodeHelper $nodeHelper,
+		private readonly IUserManager $userManager,
+		private readonly IUserSession $userSession,
+		private readonly IFactory $l10nFactory,
+	) {
 		parent::__construct();
 	}
 
@@ -45,11 +52,10 @@ class CreateCollective extends Base {
 		$user = $this->userManager->get($userId);
 		$this->userSession->setUser($user);
 		$lang = $this->l10nFactory->getUserLanguage($this->userSession->getUser());
-		$safeName = $this->nodeHelper->sanitiseFilename($name);
 
-		$output->write('<info>Creating new collective ' . $name . ' ... </info>');
+		$output->write('<info>Creating new collective ' . $name . ' …</info>');
 
-		[$collective, $info] = $this->collectiveService->createCollective($userId, $lang, $safeName);
+		[, $info] = $this->collectiveService->createCollective($userId, $lang, $name);
 
 		$output->writeln('<info>' . $info ?: 'done.' . '</info>');
 		return 0;

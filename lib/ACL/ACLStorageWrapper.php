@@ -2,18 +2,25 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\ACL;
 
-use OC\Files\Cache\Cache;
-use OC\Files\Cache\Scanner;
 use OC\Files\Cache\Wrapper\CacheWrapper;
 use OC\Files\Storage\Wrapper\Wrapper;
 use OCP\Constants;
+use OCP\Files\Cache\ICache;
+use OCP\Files\Cache\IScanner;
+use OCP\Files\Storage\IConstructableStorage;
+use OCP\Files\Storage\IStorage;
 use Traversable;
 
-class ACLStorageWrapper extends Wrapper {
-	private int $permissions;
-	private bool $inShare;
+class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
+	private readonly int $permissions;
+	private readonly bool $inShare;
 
 	public function __construct($arguments) {
 		parent::__construct($arguments);
@@ -26,8 +33,8 @@ class ACLStorageWrapper extends Wrapper {
 		if ($this->inShare) {
 			// Check if owner of the share is actually allowed to share
 			// $canRead = $this->permissions & (Constants::PERMISSION_READ + Constants::PERMISSION_SHARE);
-			$canRead = ($this->permissions & Constants::PERMISSION_READ) &&
-				($this->permissions & Constants::PERMISSION_SHARE);
+			$canRead = ($this->permissions & Constants::PERMISSION_READ)
+				&& ($this->permissions & Constants::PERMISSION_SHARE);
 		} else {
 			$canRead = $this->permissions & Constants::PERMISSION_READ;
 		}
@@ -35,31 +42,31 @@ class ACLStorageWrapper extends Wrapper {
 		return $canRead && ($this->permissions & $permissions) === $permissions;
 	}
 
-	public function isReadable($path): bool {
+	public function isReadable(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_READ) && parent::isReadable($path);
 	}
 
-	public function isUpdatable($path): bool {
+	public function isUpdatable(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_UPDATE) && parent::isUpdatable($path);
 	}
 
-	public function isCreatable($path): bool {
+	public function isCreatable(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_CREATE) && parent::isCreatable($path);
 	}
 
-	public function isDeletable($path): bool {
+	public function isDeletable(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_DELETE) && parent::isDeletable($path);
 	}
 
-	public function isSharable($path): bool {
+	public function isSharable(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_SHARE) && parent::isSharable($path);
 	}
 
-	public function getPermissions($path) {
+	public function getPermissions(string $path): int {
 		return $this->storage->getPermissions($path) & $this->permissions;
 	}
 
-	public function rename($source, $target): bool {
+	public function rename(string $source, string $target): bool {
 		if (str_starts_with($source, $target)) {
 			$part = substr($source, strlen($target));
 			// This is a renaming of the transfer file to the original file
@@ -68,49 +75,49 @@ class ACLStorageWrapper extends Wrapper {
 			}
 		}
 		$targetPermissions = $this->file_exists($target) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions(Constants::PERMISSION_READ) &&
-			$this->checkPermissions(Constants::PERMISSION_DELETE) &&
-			$this->checkPermissions($targetPermissions) &&
-			parent::rename($source, $target);
+		return $this->checkPermissions(Constants::PERMISSION_READ)
+			&& $this->checkPermissions(Constants::PERMISSION_DELETE)
+			&& $this->checkPermissions($targetPermissions)
+			&& parent::rename($source, $target);
 	}
 
-	public function opendir($path) {
+	public function opendir(string $path) {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::opendir($path);
 	}
 
-	public function copy($source, $target): bool {
+	public function copy(string $source, string $target): bool {
 		$targetPermissions = $this->file_exists($target) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions(Constants::PERMISSION_READ) &&
-			$this->checkPermissions($targetPermissions) &&
-			parent::copy($source, $target);
+		return $this->checkPermissions(Constants::PERMISSION_READ)
+			&& $this->checkPermissions($targetPermissions)
+			&& parent::copy($source, $target);
 	}
 
-	public function touch($path, $mtime = null): bool {
+	public function touch(string $path, ?int $mtime = null): bool {
 		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
 		return $this->checkPermissions($permissions) && parent::touch($path, $mtime);
 	}
 
-	public function mkdir($path): bool {
+	public function mkdir(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_CREATE) && parent::mkdir($path);
 	}
 
-	public function rmdir($path): bool {
+	public function rmdir(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_DELETE) && parent::rmdir($path);
 	}
 
-	public function unlink($path): bool {
+	public function unlink(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_DELETE) && parent::unlink($path);
 	}
 
-	public function file_put_contents($path, $data) {
+	public function file_put_contents(string $path, mixed $data): int|float|false {
 		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
 		return $this->checkPermissions($permissions) ? parent::file_put_contents($path, $data) : false;
 	}
 
-	public function fopen($path, $mode) {
+	public function fopen(string $path, string $mode) {
 		if ($mode === 'r' || $mode === 'rb') {
 			$permissions = Constants::PERMISSION_READ;
 		} else {
@@ -124,7 +131,7 @@ class ACLStorageWrapper extends Wrapper {
 		return $this->checkPermissions($permissions) ? parent::writeStream($path, $stream, $size) : 0;
 	}
 
-	public function getCache($path = '', $storage = null): Cache {
+	public function getCache(string $path = '', ?IStorage $storage = null): ICache {
 		if (!$storage) {
 			$storage = $this;
 		}
@@ -132,94 +139,101 @@ class ACLStorageWrapper extends Wrapper {
 		return new CacheWrapper($sourceCache);
 	}
 
-	public function getMetaData($path): ?array {
+	public function getMetaData(string $path): ?array {
 		$data = parent::getMetaData($path);
 
-		if ($data && isset($data['permissions'])) {
+		if (is_array($data) && isset($data['permissions'])) {
 			$data['scan_permissions'] ??= $data['permissions'];
 			$data['permissions'] &= $this->permissions;
 		}
 		return $data;
 	}
 
-	public function getScanner($path = '', $storage = null): Scanner {
+	public function getScanner(string $path = '', ?IStorage $storage = null): IScanner {
 		if (!$storage) {
 			$storage = $this->storage;
 		}
 		return parent::getScanner($path, $storage);
 	}
 
-	public function is_dir($path): bool {
-		return $this->checkPermissions(Constants::PERMISSION_READ) &&
-			parent::is_dir($path);
+	public function is_dir(string $path): bool {
+		return $this->checkPermissions(Constants::PERMISSION_READ)
+			&& parent::is_dir($path);
 	}
 
-	public function is_file($path): bool {
-		return $this->checkPermissions(Constants::PERMISSION_READ) &&
-			parent::is_file($path);
+	public function is_file(string $path): bool {
+		return $this->checkPermissions(Constants::PERMISSION_READ)
+			&& parent::is_file($path);
 	}
 
-	public function stat($path) {
+	public function stat(string $path): array|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::stat($path);
 	}
 
-	public function filetype($path) {
+	public function filetype(string $path): string|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::filetype($path);
 	}
 
-	public function file_exists($path): bool {
+	public function file_exists(string $path): bool {
 		return $this->checkPermissions(Constants::PERMISSION_READ) && parent::file_exists($path);
 	}
 
-	public function filemtime($path) {
+	public function filemtime(string $path): int|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::filemtime($path);
 	}
 
-	public function file_get_contents($path) {
+	public function file_get_contents(string $path): string|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::file_get_contents($path);
 	}
 
-	public function getMimeType($path) {
+	public function getMimeType(string $path): string|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::getMimeType($path);
 	}
 
-	public function hash($type, $path, $raw = false) {
+	public function hash($type, string $path, bool $raw = false): string|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::hash($type, $path, $raw);
 	}
 
-	public function getETag($path) {
+	public function getETag(string $path): string|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::getETag($path);
 	}
 
-	public function getDirectDownload($path) {
+	public function getDirectDownload(string $path): array|false {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}
 		return parent::getDirectDownload($path);
 	}
 
-	public function getDirectoryContent($directory): Traversable {
+	public function getDirectDownloadById(string $fileId): array|false {
+		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
+			return false;
+		}
+		return $this->getWrapperStorage()->getDirectDownloadById($fileId);
+	}
+
+	public function getDirectoryContent(string $directory): Traversable {
 		foreach ($this->getWrapperStorage()->getDirectoryContent($directory) as $data) {
 			$data['scan_permissions'] ??= $data['permissions'];
 			$data['permissions'] &= $this->permissions;
@@ -228,7 +242,7 @@ class ACLStorageWrapper extends Wrapper {
 		}
 	}
 
-	public function filesize($path): float|false|int {
+	public function filesize(string $path): float|false|int {
 		if (!$this->checkPermissions(Constants::PERMISSION_READ)) {
 			return false;
 		}

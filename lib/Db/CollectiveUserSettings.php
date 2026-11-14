@@ -2,11 +2,15 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Db;
 
 use JsonException;
 use JsonSerializable;
-
 use OCA\Collectives\Service\NotPermittedException;
 use OCP\AppFramework\Db\Entity;
 
@@ -23,13 +27,21 @@ class CollectiveUserSettings extends Entity implements JsonSerializable {
 	/** @var array */
 	public const supportedSettings = [
 		'page_order',
+		'show_members',
 		'show_recent_pages',
+		'favorite_pages',
+		'notify',
 	];
+
+	public const NOTIFY_OFF = 0;
+	public const NOTIFY_MENTION = 1;
+	public const NOTIFY_ALL = 2;
+	private const NOTIFY_LEVELS = [self::NOTIFY_OFF, self::NOTIFY_MENTION, self::NOTIFY_ALL];
 
 	protected ?int $collectiveId = null;
 	protected ?string $userId = null;
 	protected int $pageOrder = Collective::defaultPageOrder;
-	protected ?string $settings = '{}';
+	protected string $settings = '{}';
 
 	/**
 	 * @throws NotPermittedException
@@ -45,7 +57,7 @@ class CollectiveUserSettings extends Entity implements JsonSerializable {
 	 * @throws NotPermittedException
 	 * @throws JsonException
 	 */
-	public function getSetting(string $setting) {
+	public function getSetting(string $setting): mixed {
 		self::checkSetting($setting);
 		return json_decode($this->settings, true, 512, JSON_THROW_ON_ERROR)[$setting] ?? null;
 	}
@@ -77,8 +89,38 @@ class CollectiveUserSettings extends Entity implements JsonSerializable {
 	 * @throws NotPermittedException
 	 * @throws JsonException
 	 */
+	public function setShowMembers(bool $showMembers): void {
+		$this->setSetting('show_members', $showMembers);
+	}
+
+	/**
+	 * @throws NotPermittedException
+	 * @throws JsonException
+	 */
 	public function setShowRecentPages(bool $showRecentPages): void {
 		$this->setSetting('show_recent_pages', $showRecentPages);
+	}
+
+	/**
+	 * @throws NotPermittedException
+	 * @throws JsonException
+	 */
+	public function setFavoritePages(array $favoritePages): void {
+		if ($favoritePages !== array_filter($favoritePages, is_int(...))) {
+			throw new NotPermittedException('Invalid favorite pages value.');
+		}
+		$this->setSetting('favorite_pages', $favoritePages);
+	}
+
+	/**
+	 * @throws NotPermittedException
+	 * @throws JsonException
+	 */
+	public function setNotify(int $notify): void {
+		if (!in_array($notify, self::NOTIFY_LEVELS, true)) {
+			throw new NotPermittedException('Invalid notify value: ' . $notify);
+		}
+		$this->setSetting('notify', $notify);
 	}
 
 	public function jsonSerialize(): array {

@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Versions;
 
 use OC\Files\View;
@@ -12,7 +17,6 @@ use OCA\Collectives\Mount\CollectiveFolderManager;
 use OCA\Collectives\Service\MissingDependencyException;
 use OCA\Collectives\Service\NotFoundException;
 use OCA\Collectives\Service\NotPermittedException;
-use OCP\AppFramework\QueryException;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\FileInfo;
@@ -20,34 +24,26 @@ use OCP\Files\InvalidPathException;
 use OCP\Files\NotFoundException as FilesNotFoundException;
 use OCP\Files\NotPermittedException as FilesNotPermittedException;
 use OCP\IDBConnection;
-use OCP\Server;
-use OCP\Util;
+use OCP\IUser;
+use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 class CollectiveVersionsExpireManager extends BasicEmitter {
-	private $dispatcher;
 	private ?VersionsBackend $versionsBackend = null;
 	private string $dependencyInjectionError = '';
 
-	public function __construct(ContainerInterface $appContainer,
-		private CollectiveFolderManager $folderManager,
-		private ExpireManager $expireManager,
-		private IDBConnection $connection,
-		private CollectiveMapper $collectiveMapper,
-		private ITimeFactory $timeFactory,
-		IEventDispatcher $dispatcher) {
-		$this->dispatcher = $dispatcher;
-
-		[$major] = Util::getVersion();
-		if ($major < 28) {
-			// Use Symfony event dispatcher on older Nextcloud releases
-			$this->dispatcher = Server::get(EventDispatcherInterface::class);
-		}
-
+	public function __construct(
+		ContainerInterface $appContainer,
+		private readonly CollectiveFolderManager $folderManager,
+		private readonly ExpireManager $expireManager,
+		private readonly IDBConnection $connection,
+		private readonly CollectiveMapper $collectiveMapper,
+		private readonly ITimeFactory $timeFactory,
+		private readonly IEventDispatcher $dispatcher,
+	) {
 		try {
 			$this->versionsBackend = $appContainer->get(VersionsBackend::class);
-		} catch (QueryException $e) {
+		} catch (ContainerExceptionInterface $e) {
 			$this->dependencyInjectionError = $e->getMessage();
 		}
 	}
@@ -56,7 +52,7 @@ class CollectiveVersionsExpireManager extends BasicEmitter {
 		$qb = $this->connection->getQueryBuilder();
 		$qb->select('co.id AS id', 'circle_unique_id')
 			->from('collectives', 'co');
-		$rows = $qb->execute()->fetchAll();
+		$rows = $qb->executeQuery()->fetchAllAssociative();
 
 		$folderMap = [];
 		try {
@@ -104,12 +100,20 @@ class CollectiveVersionsExpireManager extends BasicEmitter {
 		} catch (FilesNotPermittedException $e) {
 			throw new NotPermittedException($e->getMessage(), 0, $e);
 		}
+		/** @var IUser $dummyUser */
 		$dummyUser = new User('', null, $this->dispatcher);
 		foreach ($files as $fileId => $file) {
 			if ($file instanceof FileInfo) {
+				// Some versions could have been lost during move operations across storage.
+				// When this is the case, the fileinfo's path will not contain the name.
+				// When this is the case, we unlink the version's folder for the fileid, and continue to the next file.
+				if (!str_ends_with($file->getPath(), $file->getName())) {
+					$view->unlink('/' . $fileId);
+					continue;
+				}
 				try {
 					$versions = $this->versionsBackend->getVersionsForFile($dummyUser, $file);
-				} catch (FilesNotPermittedException | InvalidPathException $e) {
+				} catch (FilesNotPermittedException|InvalidPathException $e) {
 					throw new NotPermittedException($e->getMessage(), 0, $e);
 				}
 				$expireVersions = $this->expireManager->getExpiredVersion($versions, $this->timeFactory->getTime(), false);
@@ -123,7 +127,7 @@ class CollectiveVersionsExpireManager extends BasicEmitter {
 				$this->emit(self::class, 'deleteFile', [$fileId]);
 				try {
 					$this->versionsBackend->deleteAllVersionsForFile($folder['id'], $fileId);
-				} catch (FilesNotPermittedException | InvalidPathException $e) {
+				} catch (FilesNotPermittedException|InvalidPathException $e) {
 					throw new NotPermittedException($e->getMessage(), 0, $e);
 				} catch (FilesNotFoundException $e) {
 					throw new NotFoundException($e->getMessage(), 0, $e);

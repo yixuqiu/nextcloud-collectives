@@ -1,4 +1,9 @@
-import { registerFileListHeaders } from '@nextcloud/files'
-import { FilesCollectiveHeader } from './files/FilesCollectiveHeader.js'
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
-registerFileListHeaders(FilesCollectiveHeader)
+import { registerFileListHeader } from '@nextcloud/files'
+import { FilesCollectiveHeader } from './files/FilesCollectiveHeader.ts'
+
+registerFileListHeader(FilesCollectiveHeader)

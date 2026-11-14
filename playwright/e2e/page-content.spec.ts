@@ -1,0 +1,81 @@
+/**
+ * SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import { runOcc } from '@nextcloud/e2e-test-server/docker'
+import { expect, mergeTests } from '@playwright/test'
+import { test as createCollectiveTest } from '../support/fixtures/create-collectives.ts'
+import { test as editorTest } from '../support/fixtures/editor.ts'
+
+const test = mergeTests(createCollectiveTest, editorTest)
+
+test.describe('Page content', () => {
+	// Requires https://github.com/nextcloud/whiteboard/pull/1374 to succeed with latest Text
+	test.skip('create whiteboard from attachments menu', async ({ user, page, collective, editor }) => {
+		test.slow()
+		await runOcc(['app:enable', '--force', 'whiteboard'])
+		const collectivePage = await collective.createPage({ title: 'Page with whiteboard', user, page })
+		await collectivePage.open(true)
+
+		editor.setMode(true)
+		await editor.clickMenu('attachment', 'New whiteboard')
+		await expect(editor.getContent()
+			.locator('.widget-file.whiteboard'))
+			.toBeVisible()
+
+		await runOcc(['app:disable', 'whiteboard'])
+	})
+
+	test('editor container grows vertically', async ({ user, page, collective, editor }) => {
+		const collectivePage = await collective.createPage({ title: 'Page', user, page })
+		await collectivePage.open(true)
+
+		editor.setMode(true)
+		await expect(editor.getContent()).toBeVisible()
+		await expect(editor.menubar).toBeVisible()
+
+		const containerBox = (await page.locator('.page-scroll-container').boundingBox())!
+		const menubarBox = (await editor.menubar.boundingBox())!
+		const contentBox = (await editor.getContent().boundingBox())!
+		const suggestionsContainerBox = (await editor.suggestionsContainer.boundingBox())!
+
+		const expectedContentHeight = containerBox.height - menubarBox.height - suggestionsContainerBox.height
+
+		// Allow up to 2px tolerance for borders etc.
+		expect(Math.abs(expectedContentHeight - contentBox.height)).toBeLessThan(2)
+	})
+
+	test('mentioning lists collective members first', async ({ user, page, collective, editor }) => {
+		const extraMemberIds = []
+		for (let i = 0; i < 2; i++) {
+			const member = await collective.addMember()
+			extraMemberIds.push(member.userId)
+		}
+		const collectivePage = await collective.createPage({ title: 'Page', user, page })
+		await collectivePage.open(true)
+
+		editor.setMode(true)
+		await editor.getContent().fill('@')
+		await expect(editor.getMentionSuggestions({ limit: 3 })).toHaveText([
+			user.account.userId,
+			...extraMemberIds.sort(),
+		])
+	})
+
+	test('edited content shows up in read mode', async ({ user, page, collective, editor }) => {
+		const collectivePage = await collective.createPage({ title: 'Page', user, page })
+		await collectivePage.open(true)
+
+		editor.setMode(true)
+		await editor.getContent().pressSequentially('## Heading')
+		await editor.getContent().press('Enter')
+		await editor.getContent().pressSequentially(`@${user.account.userId}`)
+		await editor.getMentionSuggestions().getByText(user.account.userId, { exact: true }).click()
+
+		await editor.switchMode(false)
+		await expect(editor.editor).toBeHidden()
+		await expect(editor.getContent().getByRole('heading', { name: 'Heading' })).toBeVisible()
+		await expect(editor.getContent().locator('.mention')).toContainText(user.account.userId)
+	})
+})

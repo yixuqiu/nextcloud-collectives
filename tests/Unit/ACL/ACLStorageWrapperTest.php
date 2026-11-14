@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\ACL;
 
 use OC;
@@ -10,7 +15,7 @@ use OCA\Collectives\ACL\ACLStorageWrapper;
 use OCP\Constants;
 use OCP\Files\Storage\IStorage;
 use OCP\IDBConnection;
-use PHPUnit\Framework\TestCase;
+use Test\TestCase;
 
 class ACLStorageWrapperTest extends TestCase {
 	private IStorage $source;
@@ -62,7 +67,6 @@ class ACLStorageWrapperTest extends TestCase {
 		]);
 
 		$this->assertFalse($storage->rename('file1', 'foo/file1'));
-
 
 		$storage = new ACLStorageWrapper([
 			'storage' => $this->source,

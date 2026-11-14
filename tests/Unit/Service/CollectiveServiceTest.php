@@ -1,15 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Service;
 
-use OC\Files\Node\File;
-use OC\Files\Node\Folder;
 use OCA\Circles\Model\Circle;
 use OCA\Circles\Model\Member;
 use OCA\Collectives\Db\Collective;
 use OCA\Collectives\Db\CollectiveMapper;
 use OCA\Collectives\Db\CollectiveUserSettingsMapper;
 use OCA\Collectives\Db\PageMapper;
+use OCA\Collectives\Db\TagMapper;
+use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Mount\CollectiveFolderManager;
 use OCA\Collectives\Service\CircleExistsException;
 use OCA\Collectives\Service\CircleHelper;
@@ -17,83 +24,73 @@ use OCA\Collectives\Service\CollectiveHelper;
 use OCA\Collectives\Service\CollectiveService;
 use OCA\Collectives\Service\CollectiveShareService;
 use OCA\Collectives\Service\NotFoundException;
+use OCA\Collectives\Service\NotPermittedException;
 use OCA\Collectives\Service\UnprocessableEntityException;
 use OCP\App\IAppManager;
 use OCP\EventDispatcher\IEventDispatcher;
+use OCP\Files\File;
+use OCP\Files\Folder;
+use OCP\Files\InvalidPathException;
+use OCP\Files\NotFoundException as FilesNotFoundException;
 use OCP\IL10N;
-use PHPUnit\Framework\TestCase;
+use Symfony\Component\String\Slugger\SluggerInterface;
+use Symfony\Component\String\UnicodeString;
+use Test\TestCase;
 
 class CollectiveServiceTest extends TestCase {
 	private string $userId = 'jane';
 	private CollectiveMapper $collectiveMapper;
 	private CollectiveHelper $collectiveHelper;
+	private CollectiveFolderManager $collectiveFolderManager;
 	private CircleHelper $circleHelper;
 	private IL10N $l10n;
 	private CollectiveService $service;
 
 	protected function setUp(): void {
-		$appManager = $this->getMockBuilder(IAppManager::class)
-			->disableOriginalConstructor()
-			->getMock();
+		parent::setUp();
+		$appManager = $this->createMock(IAppManager::class);
 
-		$this->collectiveMapper = $this->getMockBuilder(CollectiveMapper::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$this->collectiveMapper = $this->createMock(CollectiveMapper::class);
+		$this->collectiveHelper = $this->createMock(CollectiveHelper::class);
+		$this->collectiveFolderManager = $this->createMock(CollectiveFolderManager::class);
 
-		$this->collectiveHelper = $this->getMockBuilder(CollectiveHelper::class)
-			->disableOriginalConstructor()
-			->getMock();
-
-		$collectiveFolderManager = $this->getMockBuilder(CollectiveFolderManager::class)
-			->disableOriginalConstructor()
-			->getMock();
-
-		$folder = $this->getMockBuilder(Folder::class)
-			->disableOriginalConstructor()
-			->getMock();
-		$file = $this->getMockBuilder(File::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$folder = $this->createMock(Folder::class);
+		$file = $this->createMock(File::class);
 		$folder->method('get')
 			->willReturn($file);
-		$collectiveFolderManager->method('initializeFolder')
+		$this->collectiveFolderManager->method('initializeFolder')
 			->willReturn($folder);
 
-		$this->circleHelper = $this->getMockBuilder(CircleHelper::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$this->circleHelper = $this->createMock(CircleHelper::class);
+		$shareService = $this->createMock(CollectiveShareService::class);
+		$collectiveUserSettingsMapper = $this->createMock(CollectiveUserSettingsMapper::class);
+		$pageMapper = $this->createMock(PageMapper::class);
+		$tagMapper = $this->createMock(TagMapper::class);
+		$this->l10n = $this->createMock(IL10N::class);
+		$eventDispatcher = $this->createMock(IEventDispatcher::class);
 
-		$shareService = $this->getMockBuilder(CollectiveShareService::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$nodeHelper = $this->createMock(NodeHelper::class);
+		$nodeHelper->method('sanitiseFilename')
+			->willReturnCallback(fn (string $name, string $default = 'New File') => $name);
 
-		$collectiveUserSettingsMapper = $this->getMockBuilder(CollectiveUserSettingsMapper::class)
-			->disableOriginalConstructor()
-			->getMock();
-
-		$pageMapper = $this->getMockBuilder(PageMapper::class)
-			->disableOriginalConstructor()
-			->getMock();
-
-		$this->l10n = $this->getMockBuilder(IL10N::class)
-			->disableOriginalConstructor()
-			->getMock();
-
-		$eventDispatcher = $this->getMockBuilder(IEventDispatcher::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$slug = new UnicodeString('free-123');
+		$slugger = $this->createMock(SluggerInterface::class);
+		$slugger->method('slug')->willReturn($slug);
 
 		$this->service = new CollectiveService(
 			$appManager,
 			$this->collectiveMapper,
 			$this->collectiveHelper,
-			$collectiveFolderManager,
+			$this->collectiveFolderManager,
 			$this->circleHelper,
 			$shareService,
 			$collectiveUserSettingsMapper,
 			$pageMapper,
+			$tagMapper,
 			$this->l10n,
-			$eventDispatcher
+			$eventDispatcher,
+			$nodeHelper,
+			$slugger,
 		);
 	}
 
@@ -117,12 +114,11 @@ class CollectiveServiceTest extends TestCase {
 		$name = 'collective';
 		$emoji = '⭐';
 		$collective = new Collective();
-		$collective = new Collective($collective);
 		$collective->setName($name);
-		$this->assertEquals($name, $this->service->getCollectiveNameWithEmoji($collective));
+		$this->assertEquals($name, CollectiveHelper::getCollectiveNameWithEmoji($collective));
 
 		$collective->setEmoji($emoji);
-		$this->assertEquals($emoji . ' ' . $name, $this->service->getCollectiveNameWithEmoji($collective));
+		$this->assertEquals($emoji . ' ' . $name, CollectiveHelper::getCollectiveNameWithEmoji($collective));
 	}
 
 	public function testCreateWithEmptyName(): void {
@@ -142,9 +138,7 @@ class CollectiveServiceTest extends TestCase {
 	}
 
 	public function testCreateForOwnCircle(): void {
-		$circle = $this->getMockBuilder(Circle::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$circle = $this->createMock(Circle::class);
 		$circle->method('getSingleId')
 			->willReturn('CircleId');
 		$circle->method('getName')
@@ -160,8 +154,8 @@ class CollectiveServiceTest extends TestCase {
 		$this->collectiveMapper
 			->expects(self::once())
 			->method('insert')
-			->with(self::callback(fn ($collective) => is_callable([$collective, 'getCircleId']) &&
-					$collective->getCircleId() === 'CircleId'))
+			->with(self::callback(fn ($collective) => is_callable([$collective, 'getCircleId'])
+					&& $collective->getCircleId() === 'CircleId'))
 			->willReturn($collective);
 		$this->l10n
 			->expects(self::once())
@@ -173,9 +167,7 @@ class CollectiveServiceTest extends TestCase {
 	}
 
 	public function testCreate(): void {
-		$circle = $this->getMockBuilder(Circle::class)
-			->disableOriginalConstructor()
-			->getMock();
+		$circle = $this->createMock(Circle::class);
 		$circle->method('getSingleId')
 			->willReturn('CircleId');
 		$circle->method('getSanitizedName')
@@ -183,6 +175,7 @@ class CollectiveServiceTest extends TestCase {
 		$collective = new Collective();
 		$collective->setId(123);
 		$collective->setPermissions(Collective::defaultPermissions);
+		$collective->setCanLeave(true);
 		$this->circleHelper->method('createCircle')
 			->willReturn($circle);
 		$this->circleHelper->method('getLevel')
@@ -190,13 +183,14 @@ class CollectiveServiceTest extends TestCase {
 		$this->collectiveMapper
 			->expects(self::once())
 			->method('insert')
-			->with(self::callback(fn ($collective) => is_callable([$collective, 'getCircleId']) &&
-					$collective->getCircleId() === 'CircleId'))
+			->with(self::callback(fn ($collective) => is_callable([$collective, 'getCircleId'])
+					&& $collective->getCircleId() === 'CircleId'))
 			->willReturn($collective);
 		[$collective, $info] = $this->service->createCollective($this->userId, 'de', 'free');
 		self::assertIsCallable([$collective, 'jsonSerialize']);
-		self::assertEqualsCanonicalizing([
+		self::assertEquals([
 			'id' => 123,
+			'slug' => 'free-123',
 			'circleId' => null,
 			'emoji' => null,
 			'trashTimestamp' => null,
@@ -209,9 +203,111 @@ class CollectiveServiceTest extends TestCase {
 			'canShare' => true,
 			'shareToken' => null,
 			'isPageShare' => false,
+			'sharePageId' => 0,
 			'shareEditable' => false,
 			'userPageOrder' => 0,
+			'userShowMembers' => true,
 			'userShowRecentPages' => true,
+			'userFavoritePages' => [],
+			'userNotify' => 1,
+			'canLeave' => true,
 		], $collective->jsonSerialize());
+	}
+
+	private function mockTrashedCollective(): Collective {
+		$collective = new Collective();
+		$collective->setId(123);
+		$collective->setCircleId('CircleId');
+		$collective->setTrashTimestamp(1700000000);
+		$this->collectiveMapper->method('findTrashByIdAndUser')
+			->with(123, $this->userId)
+			->willReturn($collective);
+		return $collective;
+	}
+
+	public function testDeleteCollectiveDestroysCircleAfterPurge(): void {
+		$collective = $this->mockTrashedCollective();
+		$this->circleHelper->method('isOwner')
+			->willReturn(true);
+		$this->collectiveFolderManager->method('getFolder')
+			->willThrowException(new FilesNotFoundException());
+
+		$calls = [];
+		$this->collectiveMapper->expects(self::once())
+			->method('delete')
+			->with($collective)
+			->willReturnCallback(function (Collective $collective) use (&$calls): Collective {
+				$calls[] = 'purge';
+				return $collective;
+			});
+		$this->circleHelper->expects(self::once())
+			->method('destroyCircle')
+			->with('CircleId', $this->userId)
+			->willReturnCallback(function () use (&$calls): void {
+				$calls[] = 'destroyCircle';
+			});
+
+		$this->service->deleteCollective(123, $this->userId, true);
+		self::assertSame(['purge', 'destroyCircle'], $calls);
+	}
+
+	public function testDeleteCollectiveKeepCircleUnflagsCircleAfterPurge(): void {
+		$collective = $this->mockTrashedCollective();
+		$this->collectiveFolderManager->method('getFolder')
+			->willThrowException(new FilesNotFoundException());
+
+		$calls = [];
+		$this->collectiveMapper->expects(self::once())
+			->method('delete')
+			->with($collective)
+			->willReturnCallback(function (Collective $collective) use (&$calls): Collective {
+				$calls[] = 'purge';
+				return $collective;
+			});
+		$this->circleHelper->expects(self::never())
+			->method('destroyCircle');
+		$this->circleHelper->expects(self::once())
+			->method('unflagCircleAsAppManaged')
+			->with('CircleId')
+			->willReturnCallback(function () use (&$calls): void {
+				$calls[] = 'unflagCircle';
+			});
+
+		$this->service->deleteCollective(123, $this->userId, false);
+		self::assertSame(['purge', 'unflagCircle'], $calls);
+	}
+
+	public function testDeleteCollectiveKeepsCircleIfPurgeFails(): void {
+		$this->mockTrashedCollective();
+		$this->circleHelper->method('isOwner')
+			->willReturn(true);
+		$this->collectiveFolderManager->method('getFolder')
+			->willThrowException(new InvalidPathException());
+
+		$this->collectiveMapper->expects(self::never())
+			->method('delete');
+		$this->circleHelper->expects(self::never())
+			->method('destroyCircle');
+		$this->circleHelper->expects(self::never())
+			->method('unflagCircleAsAppManaged');
+
+		$this->expectException(NotFoundException::class);
+		$this->service->deleteCollective(123, $this->userId, true);
+	}
+
+	public function testDeleteCollectiveAndCircleAsNonOwnerFailsBeforePurge(): void {
+		$this->mockTrashedCollective();
+		$this->circleHelper->method('isOwner')
+			->willReturn(false);
+
+		$this->collectiveFolderManager->expects(self::never())
+			->method('getFolder');
+		$this->collectiveMapper->expects(self::never())
+			->method('delete');
+		$this->circleHelper->expects(self::never())
+			->method('destroyCircle');
+
+		$this->expectException(NotPermittedException::class);
+		$this->service->deleteCollective(123, $this->userId, true);
 	}
 }

@@ -2,61 +2,157 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Controller;
 
-use Closure;
-
 use OCA\Collectives\Service\CollectiveUserSettingsService;
-use OCP\AppFramework\Controller;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\AppFramework\OCS\OCSForbiddenException;
+use OCP\AppFramework\OCS\OCSNotFoundException;
+use OCP\AppFramework\OCSController;
 use OCP\IRequest;
-use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
-class CollectiveUserSettingsController extends Controller {
-	use ErrorHelper;
+/**
+ * Provides access to user settings for a specific collective.
+ */
+class CollectiveUserSettingsController extends OCSController {
+	use OCSExceptionHelper;
+	use UserTrait;
 
-	public function __construct(string $AppName,
+	public function __construct(
+		string $appName,
 		IRequest $request,
 		private CollectiveUserSettingsService $service,
-		private IUserSession $userSession,
-		private LoggerInterface $logger) {
-		parent::__construct($AppName, $request);
-	}
-
-	private function getUserId(): string {
-		return $this->userSession->getUser()->getUID();
-	}
-
-	private function prepareResponse(Closure $callback) : DataResponse {
-		return $this->handleErrorResponse($callback, $this->logger);
+		private LoggerInterface $logger,
+		private ?string $userId,
+	) {
+		parent::__construct($appName, $request);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set order type for pages (in page list)
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $pageOrder Selected page order
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: showMembers settings was set
 	 */
-	public function pageOrder(int $id, int $pageOrder): DataResponse {
-		return $this->prepareResponse(function () use ($id, $pageOrder): array {
+	#[NoAdminRequired]
+	public function setPageOrder(int $collectiveId, int $pageOrder): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $pageOrder): void {
 			$this->service->setPageOrder(
-				$id,
-				$this->getUserId(),
+				$collectiveId,
+				$this->getUid(),
 				$pageOrder
 			);
-			return [];
-		});
+		}, $this->logger);
+		return new DataResponse([]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set whether members widget on landing page is expanded or not
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param bool $showMembers Whether members widget on landing page is expanded or not
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: showMembers setting was set
 	 */
-	public function showRecentPages(int $id, bool $showRecentPages): DataResponse {
-		return $this->prepareResponse(function () use ($id, $showRecentPages): array {
+	#[NoAdminRequired]
+	public function setShowMembers(int $collectiveId, bool $showMembers): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $showMembers): void {
+			$this->service->setShowMembers(
+				$collectiveId,
+				$this->getUid(),
+				$showMembers
+			);
+		}, $this->logger);
+		return new DataResponse([]);
+	}
+
+	/**
+	 * Set whether recent pages widget on landing page is expanded or not
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param bool $showRecentPages Whether recent pages widget on landing page is expanded or not
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: showRecentPages setting was set
+	 */
+	#[NoAdminRequired]
+	public function setShowRecentPages(int $collectiveId, bool $showRecentPages): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $showRecentPages): void {
 			$this->service->setShowRecentPages(
-				$id,
-				$this->getUserId(),
+				$collectiveId,
+				$this->getUid(),
 				$showRecentPages
 			);
-			return [];
-		});
+		}, $this->logger);
+		return new DataResponse([]);
+	}
+
+	/**
+	 * Set list of page favorites
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param string $favoritePages JSON stringified array with favorite page IDs
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: page favorites were set
+	 */
+	#[NoAdminRequired]
+	public function setFavoritePages(int $collectiveId, string $favoritePages): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $favoritePages): void {
+			$this->service->setFavoritePages(
+				$collectiveId,
+				$this->getUid(),
+				$favoritePages
+			);
+		}, $this->logger);
+		return new DataResponse([]);
+	}
+
+	/**
+	 * Set whether the user wants notifications about changes in this collective
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $notify Notification level (0=off, 1=mentions only, 2=all changes)
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: notify level was set
+	 */
+	#[NoAdminRequired]
+	public function setNotify(int $collectiveId, int $notify): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $notify): void {
+			$this->service->setNotify(
+				$collectiveId,
+				$this->getUid(),
+				$notify
+			);
+		}, $this->logger);
+		return new DataResponse([]);
 	}
 }

@@ -1,9 +1,12 @@
+# SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 Feature: mountpoint
 
   Scenario: Set edit and share permissions for collective and check mountpoint permissions
     When user "jane" creates collective "BehatMountPoint"
     And user "jane" creates page "firstpage" with parentPath "Readme.md" in "BehatMountPoint"
-    And user "jane" uploads attachment "test.png" to "firstpage" with file path "/" in "BehatMountPoint"
+    And user "jane" uploads attachment "test.png" via webdav to "firstpage" with file path "/" in "BehatMountPoint"
     And user "jane" sets "edit" level in collective "BehatMountPoint" to "Admin"
     And user "jane" sets "share" level in collective "BehatMountPoint" to "Moderator"
     And user "john" joins team "BehatMountPoint" with owner "jane" with level "Admin"
@@ -13,6 +16,58 @@ Feature: mountpoint
     And user "john" has webdav access to "BehatMountPoint" with permissions "RMGDNVCK"
     And user "alice" has webdav access to "BehatMountPoint" with permissions "RMG"
     And user "bob" has webdav access to "BehatMountPoint" with permissions "MG"
+
+  Scenario: Delete empty folder when in conflict with mountpoint
+    When user "jane" deletes folder "MyCollectives" if it exists
+    And user "jane" creates folder "MyCollectives"
+    And user "jane" sees webdav node "MyCollectives"
+    And user "jane" creates collective "BehatMountPoint2"
+    And user "jane" sees webdav node ".Collectives/BehatMountPoint2"
+    Then user "jane" sets setting "user_folder" to value "/MyCollectives"
+    And user "jane" fails to see webdav node ".Collectives"
+    And user "jane" sees webdav node "MyCollectives"
+    And user "jane" sees webdav node "MyCollectives/BehatMountPoint2"
+    And user "jane" fails to see webdav node "MyCollectives (1)"
+    Then user "jane" sets setting "user_folder" to value "/.Collectives"
+    And user "jane" fails to see webdav node "MyCollectives"
+    And user "jane" sees webdav node ".Collectives"
+    And user "jane" sees webdav node ".Collectives/BehatMountPoint2"
+    Then user "jane" trashes and deletes collective "BehatMountPoint2"
+
+  Scenario: Rename non-empty node when in conflict with mountpoint
+    When user "jane" deletes folder "MyCollectives (1)" if it exists
+    And user "jane" creates folder "MyCollectives"
+    And user "jane" creates folder "MyCollectives/subfolder"
+    And user "jane" sees webdav node "MyCollectives/subfolder"
+    And user "jane" creates collective "BehatMountPoint3"
+    And user "jane" sees webdav node ".Collectives/BehatMountPoint3"
+    Then user "jane" sets setting "user_folder" to value "/MyCollectives"
+    And user "jane" fails to see webdav node ".Collectives"
+    And user "jane" sees webdav node "MyCollectives"
+    And user "jane" sees webdav node "MyCollectives/BehatMountPoint3"
+    And user "jane" fails to see webdav node "MyCollectives/subfolder"
+    And user "jane" sees webdav node "MyCollectives (1)/subfolder"
+    Then user "jane" sets setting "user_folder" to value "/.Collectives"
+    And user "jane" fails to see webdav node "MyCollectives"
+    And user "jane" sees webdav node ".Collectives"
+    And user "jane" sees webdav node ".Collectives/BehatMountPoint3"
+    And user "jane" deletes folder "MyCollectives (1)"
+    Then user "jane" trashes and deletes collective "BehatMountPoint3"
+
+  Scenario: Change collectives user folder for user
+    When user "bob" deletes folder "some" if it exists
+    And user "bob" creates folder "some"
+    And user "bob" sets setting "user_folder" to value "/some/folder"
+    And user "bob" fails to see webdav node ".Collectives"
+    And user "bob" sees webdav node "some/folder"
+    Then user "jane" has webdav access to "BehatMountPoint" with permissions "RMGDNVCK"
+    And user "john" has webdav access to "BehatMountPoint" with permissions "RMGDNVCK"
+    And user "alice" has webdav access to "BehatMountPoint" with permissions "RMG"
+    And user "bob" has webdav access to "BehatMountPoint" with permissions "MG"
+    Then user "bob" sets setting "user_folder" to value "/.Collectives"
+    And user "bob" fails to see webdav node "some/folder"
+    And user "bob" sees webdav node ".Collectives"
+    And user "bob" deletes folder "some"
 
   Scenario: Trash page via webdav
     When user "bob" fails to trash page "firstpage" via webdav in "BehatMountPoint"
@@ -29,10 +84,20 @@ Feature: mountpoint
     And user "jane" sees attachment "test.png" with mimetype "image/png" for "firstpage" in "BehatMountPoint"
 
   Scenario: Trash and delete page via webdav
-    And user "jane" trashes page "firstpage" via webdav in "BehatMountPoint"
+    When user "jane" trashes page "firstpage" via webdav in "BehatMountPoint"
     And user "jane" deletes page "firstpage" from trash via webdav in "BehatMountPoint"
     Then user "jane" fails to see pagePath "firstpage.md" in "BehatMountPoint"
 
+  Scenario: Editable public share of collective permissions is read-write
+    When user "jane" sets "edit" level in collective "BehatMountPoint" to "Member"
+    And user "jane" sets "share" level in collective "BehatMountPoint" to "Member"
+    And user "jane" creates public share for "BehatMountPoint"
+    And user "jane" sets editing permissions for collective share "BehatMountPoint"
+    Then public share with owner "jane" has webdav access to "BehatMountPoint" with permissions "RGDNVCK"
+
+  Scenario: Editable public share of collective with admin-only permissions is read-only
+    When user "jane" sets "edit" level in collective "BehatMountPoint" to "Admin"
+    Then public share with owner "jane" has webdav access to "BehatMountPoint" with permissions "RG"
+
   Scenario: Trash and delete collective and team
-    Then user "jane" trashes collective "BehatMountPoint"
-    And user "jane" deletes collective+team "BehatMountPoint"
+    Then user "jane" trashes and deletes collective "BehatMountPoint"

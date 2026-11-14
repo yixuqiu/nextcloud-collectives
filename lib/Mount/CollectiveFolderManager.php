@@ -2,15 +2,25 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Mount;
 
 use Exception;
 use OC;
+use OC\Files\Node\LazyFolder;
 use OC\Files\Storage\Wrapper\Jail;
 use OC\Files\Storage\Wrapper\PermissionsMask;
 use OCA\Collectives\ACL\ACLStorageWrapper;
+use OCA\Collectives\Model\CollectiveFileInfo;
+use OCA\Richdocuments\Db\WopiMapper;
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\Files\Cache\ICacheEntry;
 use OCP\Files\Folder;
+use OCP\Files\IMimeTypeLoader;
 use OCP\Files\InvalidPathException;
 use OCP\Files\IRootFolder;
 use OCP\Files\Mount\IMountPoint;
@@ -22,8 +32,8 @@ use OCP\IDBConnection;
 use OCP\IRequest;
 use OCP\IUser;
 use OCP\IUserSession;
-use OCP\Util;
-use RuntimeException;
+use OCP\L10N\IFactory;
+use OCP\Server;
 
 class CollectiveFolderManager {
 	private const SKELETON_DIR = 'skeleton';
@@ -31,13 +41,23 @@ class CollectiveFolderManager {
 	private const SUFFIX = '.md';
 
 	private ?string $rootPath = null;
-	private ?int $rootFolderStorageId = null;
+	private ?int $rootFolderId = null;
+	private ?Folder $collectivesRootFolder = null;
 
-	public function __construct(private IRootFolder $rootFolder,
-		private IDBConnection $connection,
-		private IConfig $config,
-		private IUserSession $userSession,
-		private IRequest $request) {
+	public function __construct(
+		private readonly IRootFolder $rootFolder,
+		private readonly IDBConnection $connection,
+		private readonly IConfig $config,
+		private readonly IUserSession $userSession,
+		private readonly IRequest $request,
+		private readonly IFactory $l10nFactory,
+		private readonly IMimeTypeLoader $mimeTypeLoader,
+	) {
+	}
+
+	private function getAppdataPath(): string {
+		$instanceId = $this->config->getSystemValueString('instanceid');
+		return 'appdata_' . $instanceId;
 	}
 
 	public function getRootPath(): string {
@@ -45,24 +65,37 @@ class CollectiveFolderManager {
 			return $this->rootPath;
 		}
 
-		$instanceId = $this->config->getSystemValue('instanceid', null);
-		if ($instanceId === null) {
-			throw new RuntimeException('no instance id!');
-		}
-
-		$this->rootPath = 'appdata_' . $instanceId . '/collectives';
+		$this->rootPath = $this->getAppdataPath() . '/collectives';
 		return $this->rootPath;
 	}
 
 	public function getRootFolder(): Folder {
-		return new LazyFolder($this->rootFolder, $this->getRootPath());
+		if ($this->collectivesRootFolder !== null) {
+			return $this->collectivesRootFolder;
+		}
+
+		$rootFolder = $this->rootFolder;
+		$appdataPath = $this->getAppdataPath();
+		$this->collectivesRootFolder = new LazyFolder($rootFolder, function () use ($rootFolder, $appdataPath) {
+			/** @var Folder $appdata */
+			$appdata = $rootFolder->get($appdataPath);
+			try {
+				return $appdata->get('/collectives');
+			} catch (NotFoundException) {
+				return $appdata->newFolder('collectives');
+			}
+		}, [
+			'path' => '/' . $this->getRootPath(),
+		]);
+
+		return $this->collectivesRootFolder;
 	}
 
 	private function getCurrentUID(): ?string {
 		try {
 			// wopi requests are not logged in, instead we need to get the editor user from the access token
-			if (strpos($this->request->getRawPathInfo(), 'apps/richdocuments/wopi') && class_exists('OCA\Richdocuments\Db\WopiMapper')) {
-				$wopiMapper = OC::$server->query('OCA\Richdocuments\Db\WopiMapper');
+			if (strpos($this->request->getRawPathInfo(), 'apps/richdocuments/wopi') && class_exists(WopiMapper::class)) {
+				$wopiMapper = Server::get(WopiMapper::class);
 				$token = $this->request->getParam('access_token');
 				if ($token) {
 					return $wopiMapper->getPathForToken($token)->getEditorUid();
@@ -87,10 +120,13 @@ class CollectiveFolderManager {
 		if (!$cacheEntry) {
 			try {
 				$folder = $this->getOrCreateFolder($id);
-			} catch (InvalidPathException | NotPermittedException) {
+			} catch (InvalidPathException|NotPermittedException) {
 				return null;
 			}
 			$cacheEntry = $this->getRootFolder()->getStorage()->getCache()->get($folder->getId());
+			if ($cacheEntry === false) {
+				return null;
+			}
 		}
 
 		$storage = new NoExcludePropagatorStorageWrapper(['storage' => $this->getRootFolder()->getStorage()]);
@@ -99,8 +135,7 @@ class CollectiveFolderManager {
 
 		// apply acl before jail
 		if ($user) {
-			$inShare = $this->getCurrentUID() === null || $this->getCurrentUID() !== $user->getUID();
-			[$major, $minor, $micro] = Util::getVersion();
+			$inShare = !OC::$CLI && ($this->getCurrentUID() === null || $this->getCurrentUID() !== $user->getUID());
 			$storage = new ACLStorageWrapper([
 				'storage' => $storage,
 				'permissions' => $permissions,
@@ -134,7 +169,6 @@ class CollectiveFolderManager {
 		);
 	}
 
-
 	private function getJailPath(int $folderId): string {
 		return $this->getRootFolder()->getInternalPath() . '/' . $folderId;
 	}
@@ -142,19 +176,23 @@ class CollectiveFolderManager {
 	/**
 	 * @throws NotFoundException
 	 */
-	private function getRootFolderStorageId(): int {
-		if ($this->rootFolderStorageId === null) {
+	private function getRootFolderId(): int {
+		if ($this->rootFolderId === null) {
 			$qb = $this->connection->getQueryBuilder();
 
-			$qb->select('fileid')
-				->from('filecache')
-				->where($qb->expr()->eq('storage', $qb->createNamedParameter($this->getRootFolder()->getStorage()->getCache()->getNumericStorageId())))
+			$qb->select('f.fileid')
+				->from('filecache', 'f')
+				->where($qb->expr()->eq('storage', $qb->createNamedParameter($this->getRootFolderStorageId())))
 				->andWhere($qb->expr()->eq('path_hash', $qb->createNamedParameter(md5($this->getRootPath()))));
 
-			$this->rootFolderStorageId = (int)$qb->execute()->fetchColumn();
+			$this->rootFolderId = (int)$qb->executeQuery()->fetchOne();
 		}
 
-		return $this->rootFolderStorageId;
+		return $this->rootFolderId;
+	}
+
+	private function getRootFolderStorageId(): int {
+		return $this->getRootFolder()->getStorage()->getCache()->getNumericStorageId();
 	}
 
 	/**
@@ -173,31 +211,107 @@ class CollectiveFolderManager {
 		return $skeletonFolder;
 	}
 
-	public function getLandingPagePath(string $path, string $lang): string {
-		$landingPagePathEnglish = $path . '/' . self::LANDING_PAGE_TITLE . '.en' . self::SUFFIX;
-		$landingPagePathLocalized = $path . '/' . self::LANDING_PAGE_TITLE . '.' . $lang . self::SUFFIX;
-
-		return file_exists($landingPagePathLocalized) ? $landingPagePathLocalized : $landingPagePathEnglish;
-	}
-
 	/**
 	 * @throws NotFoundException
 	 * @throws \OCP\DB\Exception
+	 * @psalm-suppress MoreSpecificReturnType
+	 * @return array<int, array{
+	 *     folder_id: int,
+	 *     fileid: int,
+	 *     storage: int,
+	 *     path: string,
+	 *     name: string,
+	 *     mimetype: string,
+	 *     mimepart: string,
+	 *     size: int|float,
+	 *     mtime: int,
+	 *     storage_mtime: int,
+	 *     etag: string,
+	 *     encrypted: bool,
+	 *     parent: int,
+	 *     permissions: int,
+	 * }|null>
 	 */
-	public function getFolderFileCache(int $id, string $name): array {
+	public function getFolderFileCachePerCollectiveId(array $ids): array {
+		if (!$ids) {
+			return [];
+		}
 		$qb = $this->connection->getQueryBuilder();
 		$qb->select(
-			'co.id AS folder_id', 'fileid', 'storage', 'path', 'fc.name AS name',
-			'mimetype', 'mimepart', 'size', 'mtime', 'storage_mtime', 'etag', 'encrypted', 'parent', 'fc.permissions AS permissions')
+			'co.id AS folder_id', 'fc.fileid', 'fc.storage', 'fc.path', 'fc.name AS name',
+			'fc.mimetype', 'fc.mimepart', 'fc.size', 'fc.mtime', 'fc.storage_mtime', 'fc.etag', 'fc.encrypted', 'fc.parent', 'fc.permissions AS permissions')
 			->from('collectives', 'co')
-			->leftJoin('co', 'filecache', 'fc', $qb->expr()->andX(
-				// concat with empty string to work around missing cast to string
-				$qb->expr()->eq('fc.name', $qb->func()->concat('co.id', $qb->expr()->literal(''))),
-				$qb->expr()->eq('parent', $qb->createNamedParameter($this->getRootFolderStorageId()))))
-			->where($qb->expr()->eq('co.id', $qb->createNamedParameter($id)));
-		$cache = $qb->execute()->fetch();
-		$cache['mount_point'] = $name;
-		return $cache;
+			->leftJoin('co', 'filecache', 'fc', $qb->expr()->eq('fc.name', $qb->expr()->castColumn('co.id', IQueryBuilder::PARAM_STR)))
+			->where($qb->expr()->in('co.id', $qb->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)))
+			->andWhere($qb->expr()->eq('fc.parent', $qb->createNamedParameter($this->getRootFolderId())))
+			->andWhere($qb->expr()->eq('fc.storage', $qb->createNamedParameter($this->getRootFolderStorageId(), IQueryBuilder::PARAM_INT)));
+		$rows = $qb->executeQuery()->fetchAllAssociative();
+		$result = [];
+		foreach ($rows as $row) {
+			$result[$row['folder_id']] = $row;
+		}
+		/** @psalm-suppress LessSpecificReturnStatement */
+		return $result;
+	}
+
+	/**
+	 * Load all filecache entries (files and folders) below a folder of a collective.
+	 * Skips hidden folders (starting with a dot).
+	 *
+	 * Walks the tree level by level via the `parent` column.
+	 *
+	 * @return CollectiveFileInfo[] Indexed by file id, with paths relative to the collective root folder
+	 *
+	 * @throws NotFoundException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function getFileCacheForCollective(int $collectiveId, int $folderId): array {
+		$prefixLength = strlen($this->getJailPath($collectiveId) . '/');
+		$storageId = $this->getRootFolderStorageId();
+		$folderMimeTypeId = $this->mimeTypeLoader->getId(ICacheEntry::DIRECTORY_MIMETYPE);
+
+		$qb = $this->connection->getQueryBuilder();
+		$qb->select('fileid', 'storage', 'path', 'parent', 'name', 'mimetype', 'mimepart',
+			'size', 'mtime', 'storage_mtime', 'encrypted', 'etag', 'permissions')
+			->from('filecache')
+			->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->in('parent', $qb->createParameter('parentIds')));
+
+		$result = [];
+		$parentIds = [$folderId];
+		while ($parentIds !== []) {
+			$nextParentIds = [];
+			foreach (array_chunk($parentIds, 1000) as $chunk) {
+				$qb->setParameter('parentIds', $chunk, IQueryBuilder::PARAM_INT_ARRAY);
+				$cursor = $qb->executeQuery();
+				while ($row = $cursor->fetchAssociative()) {
+					$fileId = (int)$row['fileid'];
+					$result[$fileId] = new CollectiveFileInfo(
+						fileId: $fileId,
+						storage: (int)$row['storage'],
+						path: substr($row['path'], $prefixLength),
+						parent: (int)$row['parent'],
+						name: (string)$row['name'],
+						mimetype: (int)$row['mimetype'],
+						mimepart: (int)$row['mimepart'],
+						size: (int)$row['size'],
+						mtime: (int)$row['mtime'],
+						storageMtime: (int)$row['storage_mtime'],
+						encrypted: (int)$row['encrypted'],
+						etag: (string)$row['etag'],
+						permissions: (int)$row['permissions'],
+					);
+					// Descend into folders and skip hidden ones (e.g. `.attachments.*`)
+					if ((int)$row['mimetype'] === $folderMimeTypeId && !str_starts_with((string)$row['name'], '.')) {
+						$nextParentIds[] = $fileId;
+					}
+				}
+				$cursor->closeCursor();
+			}
+			$parentIds = $nextParentIds;
+		}
+
+		return $result;
 	}
 
 	/**
@@ -220,6 +334,7 @@ class CollectiveFolderManager {
 		try {
 			$folder = $this->getFolder($id);
 		} catch (NotFoundException) {
+			/** @var Folder $folder */
 			$folder = $this->getSkeletonFolder($this->getRootFolder())
 				->copy($this->getRootFolder()->getPath() . '/' . $id);
 		}
@@ -231,18 +346,23 @@ class CollectiveFolderManager {
 	 * @throws InvalidPathException
 	 * @throws NotPermittedException
 	 */
-	public function initializeFolder(int $id, string $lang): Folder {
+	public function initializeFolder(int $id, string $lang, string $name): Folder {
 		$folder = $this->getOrCreateFolder($id);
 
 		$landingPageFileName = self::LANDING_PAGE_TITLE . self::SUFFIX;
 		if (!$folder->nodeExists($landingPageFileName)) {
-			$landingPageDir = __DIR__ . '/../../' . self::SKELETON_DIR;
-			$landingPagePath = $this->getLandingPagePath($landingPageDir, $lang);
-			if (false !== $content = file_get_contents($landingPagePath)) {
-				$folder->newFile($landingPageFileName, $content);
-			}
+			$content = $this->getLandingPageContent($name, $lang);
+			$folder->newFile($landingPageFileName, $content);
 		}
 
 		return $folder;
+	}
+
+	private function getLandingPageContent(string $name, string $lang): string {
+		$l10n = $this->l10nFactory->get('collectives', $lang);
+		return '# ' . $l10n->t('Welcome %s', $name) . "\n\n"
+			. $l10n->t('Add pages with the ➕ in the page list! You can drag them to change the order. Dragging them into the editor will create a 🔗 link.') . "\n\n"
+			// TRANSLATORS [...](...) is Markdown link format. Please don't add spaces in between the syntax.
+			. $l10n->t('Press `✏️ Edit` to change this text and make yourself at home! Multiple people can edit together. Find out more in the [documentation](https://docs.nextcloud.com/server/latest/user_manual/en/collectives/index.html) or ask [the community](https://help.nextcloud.com/tag/collectives-app).');
 	}
 }

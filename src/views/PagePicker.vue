@@ -1,0 +1,381 @@
+<!--
+  - SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<template>
+	<div class="modal-scroller collectives-page-picker">
+		<h2>{{ t('collectives', 'Add link to page') }}</h2>
+		<div class="modal-inner">
+			<div class="searchbar">
+				<NcTextField
+					ref="searchInput"
+					v-model="query"
+					:label="t('collectives', 'Search pages…')"
+					:showTrailingButton="!!query"
+					:trailingButtonLabel="t('collectives', 'Clear search')"
+					@trailingButtonClick="query = ''"
+					@keydown.down.prevent="focusPage(0)" />
+				<NcActions v-if="!isPublic && collectiveId">
+					<template #icon>
+						<FilterCheckOutlineIcon v-if="filterCollective" :size="20" />
+						<FilterOutlineIcon v-else :size="20" />
+					</template>
+					<NcActionCheckbox v-model="filterCollective">
+						{{ t('collectives', 'Limit to current collective') }}
+					</NcActionCheckbox>
+					<NcActionText v-if="!filterCollective">
+						<template #icon>
+							<AlertOutlineIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Other members may lack access to pages from other collectives.') }}
+					</NcActionText>
+				</NcActions>
+			</div>
+
+			<div class="page-list">
+				<ul v-if="pages.length > 0" @keydown="onPageListKeydown">
+					<li v-for="page in pages" :key="page.id">
+						<PagePreview
+							:title="page.title"
+							:description="description(page)"
+							:emoji="page.emoji!"
+							:lastUserId="page.lastUserId!"
+							:lastUserDisplayName="page.lastUserDisplayName!"
+							:small="true"
+							class="page-preview-item"
+							@click="onClickPage(page)" />
+					</li>
+				</ul>
+				<NcEmptyContent
+					v-else-if="searchedPagesLoading"
+					:description="t('collectives', 'Loading pages')">
+					<template #icon>
+						<NcLoadingIcon />
+					</template>
+				</NcEmptyContent>
+				<NcEmptyContent v-else :description="t('collectives', 'No pages to link')">
+					<template #icon>
+						<CollectivesIcon />
+					</template>
+				</NcEmptyContent>
+			</div>
+
+			<div class="modal-buttons">
+				<NcButton @click="close">
+					{{ t('collectives', 'Cancel') }}
+				</NcButton>
+			</div>
+		</div>
+	</div>
+</template>
+
+<script lang="ts">
+import type { PageInfo } from '../types.ts'
+
+import { t } from '@nextcloud/l10n'
+import { generateUrl } from '@nextcloud/router'
+import { isPublicShare } from '@nextcloud/sharing/public'
+import debounce from 'debounce'
+import { defineComponent } from 'vue'
+import NcActionCheckbox from '@nextcloud/vue/components/NcActionCheckbox'
+import NcActions from '@nextcloud/vue/components/NcActions'
+import NcActionText from '@nextcloud/vue/components/NcActionText'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
+import AlertOutlineIcon from 'vue-material-design-icons/AlertOutline.vue'
+import FilterCheckOutlineIcon from 'vue-material-design-icons/FilterCheckOutline.vue'
+import FilterOutlineIcon from 'vue-material-design-icons/FilterOutline.vue'
+import CollectivesIcon from '../components/Icon/CollectivesIcon.vue'
+import PagePreview from '../components/PagePreview.vue'
+import { searchRecentPages } from '../apis/collectives/index.js'
+import { ALL_PAGES_STORE_NAME } from '../stores/pages.js'
+import { byTimeAsc } from '../util/sortOrders.js'
+
+export default defineComponent({
+	name: 'PagePicker',
+
+	components: {
+		AlertOutlineIcon,
+		CollectivesIcon,
+		FilterCheckOutlineIcon,
+		FilterOutlineIcon,
+		NcActionCheckbox,
+		NcActions,
+		NcActionText,
+		NcButton,
+		NcEmptyContent,
+		NcLoadingIcon,
+		NcTextField,
+		PagePreview,
+	},
+
+	emits: [
+		'cancel',
+	],
+
+	setup() {
+		const isPublic = isPublicShare()
+		return { isPublic, t }
+	},
+
+	data() {
+		return {
+			collectiveId: null,
+			filterCollective: false,
+			currentPages: [] as PageInfo[],
+			searchedPages: [] as PageInfo[],
+			searchedPagesLoading: false,
+			rootPage: null as PageInfo | null,
+			selectedPageId: null as number | null,
+			isLoadingPages: false,
+			query: '',
+			debouncedGetSearchedPages: debounce(this.getSearchedPages, 300),
+		}
+	},
+
+	computed: {
+		currentRecentPages() {
+			const recentPages = this.currentPages
+				.slice()
+				.sort(byTimeAsc)
+			if (!this.query) {
+				return recentPages
+			}
+			const lowerQuery = this.query.toLowerCase()
+			const collectiveName = window.OCA.Collectives?.currentCollective?.nameWithEmoji ?? ''
+			const collectiveNameMatches = collectiveName.toLocaleLowerCase().includes(lowerQuery)
+			return recentPages.filter((p) => {
+				if (p.title.toLocaleLowerCase().includes(lowerQuery)) {
+					return true
+				}
+				// Also show landing page when the collective name matches
+				return collectiveNameMatches && p.parentId === 0
+			})
+		},
+
+		pages() {
+			return this.filterCollective
+				? this.currentRecentPages.slice(0, 10)
+				: this.searchedPages.slice(0, 10)
+		},
+	},
+
+	watch: {
+		query() {
+			if (!this.filterCollective) {
+				this.searchedPages = []
+				this.debouncedGetSearchedPages()
+			}
+		},
+
+		filterCollective(newValue) {
+			if (!newValue) {
+				this.getSearchedPages()
+			}
+		},
+	},
+
+	mounted() {
+		this.initCurrentPages()
+
+		// NcModal activates its focus trap after its enter transition and keeps the
+		// focus if it is inside the modal already. So focus the search input early.
+		setTimeout(() => this.$refs.searchInput.focus(), 0)
+	},
+
+	methods: {
+		close() {
+			this.$emit('cancel')
+		},
+
+		initCurrentPages() {
+			this.collectiveId = window.OCA.Collectives?.currentCollective?.id
+			const storeIndex = window.OCA.Collectives?.currentCollective?.storeIndex
+			if (this.collectiveId && storeIndex) {
+				this.filterCollective = true
+				let raw
+				try {
+					raw = localStorage.getItem(ALL_PAGES_STORE_NAME)
+					if (raw) {
+						const allPagesMap = JSON.parse(raw)
+						this.currentPages = allPagesMap[storeIndex] ?? []
+					}
+					return
+				} catch {
+					// Nothing found in localStorage, defer to getting pages from server
+				}
+			}
+
+			if (!this.isPublic) {
+				this.getSearchedPages()
+			}
+		},
+
+		onClickPage(page: PageInfo) {
+			const collectivePath = this.filterCollective
+				? window.OCA.Collectives?.currentCollective?.path
+				: page.collectivePath
+
+			if (collectivePath) {
+				const pagePath = page.slug
+					? `${page.slug}-${page.id}`
+					: encodeURIComponent(page.title)
+				const pageLink = window.location.origin
+					+ generateUrl('/apps/collectives')
+					+ collectivePath
+					+ '/' + pagePath
+				const pickerReference = {
+					link: pageLink,
+					title: page.title,
+				}
+				this.$el.dispatchEvent(new CustomEvent('pick', {
+					bubbles: true,
+					detail: pickerReference,
+				}))
+				this.$el.dispatchEvent(new CustomEvent('submit', {
+					bubbles: true,
+					detail: pageLink,
+				}))
+			} else {
+				console.error('Cannot generate page link')
+			}
+		},
+
+		pageItems(): HTMLElement[] {
+			return Array.from(this.$el.querySelectorAll('.page-preview-item'))
+		},
+
+		focusPage(index: number) {
+			this.pageItems()[index]?.focus()
+		},
+
+		onPageListKeydown(event: KeyboardEvent) {
+			const items = this.pageItems()
+			const index = items.indexOf(document.activeElement as HTMLElement)
+			if (index === -1) {
+				return
+			}
+
+			switch (event.key) {
+				case 'ArrowDown':
+					this.focusPage(Math.min(index + 1, items.length - 1))
+					break
+				case 'ArrowUp':
+					if (index === 0) {
+						this.$refs.searchInput.focus()
+					} else {
+						this.focusPage(index - 1)
+					}
+					break
+				case 'Home':
+					this.focusPage(0)
+					break
+				case 'End':
+					this.focusPage(items.length - 1)
+					break
+				default:
+					return
+			}
+			event.preventDefault()
+		},
+
+		description(page: PageInfo) {
+			const collectiveNameWithEmoji = this.filterCollective
+				? window.OCA.Collectives?.currentCollective?.nameWithEmoji || ''
+				: page.collectiveNameWithEmoji
+
+			const collectiveAndPagePath = page.filePathString
+				? collectiveNameWithEmoji + ' - ' + page.filePathString
+				: collectiveNameWithEmoji
+			return t('collectives', 'In collective {path}', { path: collectiveAndPagePath })
+		},
+
+		async getSearchedPages() {
+			const currentQuery = this.query
+			this.searchedPagesLoading = true
+			try {
+				const response = await searchRecentPages(currentQuery)
+				if (this.query === currentQuery) {
+					this.searchedPages = response.data.ocs.data.pages
+				}
+			} finally {
+				if (this.query === currentQuery) {
+					this.searchedPagesLoading = false
+				}
+			}
+		},
+	},
+})
+</script>
+
+<style lang="scss" scoped>
+.modal-scroller {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+
+	h2 {
+		display: flex;
+		margin-top: 12px;
+	}
+}
+
+.modal-inner {
+	box-sizing: border-box;
+	display: flex;
+	gap: calc(3 * var(--default-grid-baseline));
+	flex-direction: column;
+	width: 100%;
+	height: 500px;
+	padding: calc(var(--default-grid-baseline) * 3);
+}
+
+.modal-buttons {
+	display: flex;
+	justify-content: flex-end;
+	position: sticky;
+	bottom: 0;
+}
+
+.searchbar {
+	display: flex;
+	align-items: center;
+	gap: var(--default-grid-baseline);
+}
+
+.page-list {
+	display: inline-block;
+	width: 100%;
+	height: calc(100% - 34px - 8px - 6px);
+	overflow-y: auto;
+	flex: 1;
+
+	ul {
+		display: flex;
+		flex-direction: column;
+		gap: var(--default-grid-baseline);
+	}
+}
+
+.page-preview-item {
+	border: 2px solid var(--color-border);
+	border-radius: var(--border-radius-container);
+	margin-inline-end: calc(3 * var(--default-grid-baseline));
+	width: unset;
+
+	&:hover,
+	&:focus-visible {
+		background-color: var(--color-background-hover);
+	}
+
+	&:focus-visible {
+		outline: 2px solid var(--color-main-text);
+		outline-offset: -2px;
+	}
+}
+</style>

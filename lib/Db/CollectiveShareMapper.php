@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Db;
 
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -23,6 +28,9 @@ class CollectiveShareMapper extends QBMapper {
 		parent::__construct($db, 'collectives_shares', CollectiveShare::class);
 	}
 
+	/**
+	 * @return CollectiveShare[]
+	 */
 	public function findByCollectiveId(int $collectiveId): array {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
@@ -34,16 +42,18 @@ class CollectiveShareMapper extends QBMapper {
 	}
 
 	/**
+	 * @return CollectiveShare[]
 	 * @throws Exception
 	 */
 	public function findByCollectiveIdAndUser(int $collectiveId, string $userId): array {
 		$qb = $this->db->getQueryBuilder();
-		$where = $qb->expr()->andX();
-		$where->add($qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+		$andX = [
+			$qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)),
+		];
 		$qb->select('*')
 			->from($this->tableName)
-			->where($where);
+			->where($qb->expr()->andX(...$andX));
 		return $this->findEntities($qb);
 	}
 
@@ -54,13 +64,14 @@ class CollectiveShareMapper extends QBMapper {
 	 */
 	public function findOneByCollectiveIdAndUser(int $collectiveId, int $pageId, string $userId): CollectiveShare {
 		$qb = $this->db->getQueryBuilder();
-		$where = $qb->expr()->andX();
-		$where->add($qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('page_id', $qb->createNamedParameter($pageId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+		$andX = [
+			$qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('page_id', $qb->createNamedParameter($pageId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)),
+		];
 		$qb->select('*')
 			->from($this->tableName)
-			->where($where);
+			->where($qb->expr()->andX(...$andX));
 		return $this->findEntity($qb);
 	}
 
@@ -86,14 +97,15 @@ class CollectiveShareMapper extends QBMapper {
 	 */
 	public function findOneByCollectiveIdAndTokenAndUser(int $collectiveId, int $pageId, string $token, string $userId): CollectiveShare {
 		$qb = $this->db->getQueryBuilder();
-		$where = $qb->expr()->andX();
-		$where->add($qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('page_id', $qb->createNamedParameter($pageId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('token', $qb->createNamedParameter($token, IQueryBuilder::PARAM_STR)));
-		$where->add($qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+		$andX = [
+			$qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('page_id', $qb->createNamedParameter($pageId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('token', $qb->createNamedParameter($token, IQueryBuilder::PARAM_STR)),
+			$qb->expr()->eq('owner', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)),
+		];
 		$qb->select('*')
 			->from($this->tableName)
-			->where($where);
+			->where($qb->expr()->andX(...$andX));
 		return $this->findEntity($qb);
 	}
 
@@ -117,7 +129,7 @@ class CollectiveShareMapper extends QBMapper {
 		try {
 			$share = $this->findOneByToken($token);
 			return $this->delete($share);
-		} catch (MultipleObjectsReturnedException | DoesNotExistException) {
+		} catch (MultipleObjectsReturnedException|DoesNotExistException) {
 		}
 
 		return null;

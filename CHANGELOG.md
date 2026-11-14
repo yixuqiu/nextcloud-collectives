@@ -1,5 +1,939 @@
 # Changelog
 
+## 4.8.0 - 2026.11.04
+
+### ✨New
+* 🔒 Shares: allow setting an expiration date for share links.
+* 🔃 Versions: compare any two page versions side by side (Nextcloud 35+).
+* 💄 Page list: add a "collapse all pages" action.
+* 🧹 Drop support for Nextcloud 32 and PHP8.1.
+
+### 🐛Fixes
+* 🔒 Shares: prevent editable share links when editing is restricted.
+* 💄 Shares: show the collective name in the header and hide the collective selector.
+* 💄 Shares: hide navigation for single-page shares.
+* 💄 Shares: show the page title instead of "Landing page" in page shares.
+* 📎 Attachments: fix opening from page sidebar. (#2900)
+* 📎 Attachments: open in viewer on public shares.
+* 📎 Attachments: return 404 when listing attachments of inaccessible page.
+* 🚀 Performance: fix a memory leak with many attachments.
+* 🚀 Performance: don't listen to notify_push in public shares.
+* 🐛 Viewer: allow opening the page sidebar from the viewer.
+* 🔎 Page picker: insert text-only links with the link title. (#1583)
+* 🔎 Page picker: make search results keyboard accessible. (#2880)
+* 🔎 Search: don't show deleted pages in search results.
+* 🔎 References: fix resolving share links in some scenarios. (#2475)
+* 🗑️ Trash: fix restoring pages when a page with the same name exists.
+* 🗑️ Trash: delete page versions when permanently deleting a collective.
+* 🗑️ Trash: delete a collective's data before deleting its team.
+* 🐛 Page list: don't let stale responses revert local changes. (#2167)
+* 💄 Page list: keep the sideb resize handle off the scrollbar. (#2821)
+* 🚚 Fix DB duplicate entries errors on index and version inserts. Thanks @Koc.
+* 💄 Page: loading placeholder now matches the page layout.
+* 💄 Restore styling of notifications. Thanks @kjoscha.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⚙️ Register app settings in Nextcloud's config lexicon.
+* 🧹 Exclude development files from the release tarball.
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.7.1 - 2026.09.24
+
+### 🐛Fixes
+* 🗑️ Add a grace period before purging orphaned collectives. (#2813)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+
+## 4.7.0 - 2026.09.22
+
+### ✨New
+* 🔃 Add version comparison on Nextcloud 35.
+
+### 🐛Fixes
+* 🗑️ Collectives trash: fix delete modal. (#2744)
+* 🙂 Accept flag and keycap emojis as valid. (#2752)
+* ✏️ Don't sync page mode across browser tabs.
+* 🗑️ Cleanup orphaned collectives. (#2300)
+* 🚀 Improve page tree compilation logic. (#2733)
+* 💄 Add home button to access landing page. (#2742)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.6.1 - 2026.09.01
+
+### 🐛Fixes
+* 🔒 Prevent guest users from creating collectives (#2702). Thanks @ ZakariaHogeschoolR.
+* 🛢️ Fix duplicate entry for key 'c_p_versions_uniq_idx' DB error (#1886, #2405).
+* 🖱️ Allow to scroll long collectives list (#2725).
+* 🖱️ Fix several drag and drop issues in page list.
+* 📎 Show progress when uploading an attachment in sidebar tab.
+* 📎 Don't show loading spinner when refreshing list of attachments in background.
+* 📎 Allow to open office attachments in new tab with middle-click as authenticated user.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.6.0 - 2026.08.24
+
+### ✨New
+* 🚀 Navigation dropdown to select collective (#2682).
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+
+
+## 4.5.0 - 2026.08.13
+
+### ✨New
+* ✨ Add Nextcloud 35 support.
+* 🔔 Allow to subscribe to changes in a collective (#317).
+
+### 🐛Fixes
+* 🔎 Always list page picker first in smart picker when in Collectives app.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.4.3 - 2026.08.05
+
+### 🐛Fixes
+* 🔌 OpenAPI: fix response definitions. (#2588)
+* 🔎 Render search query quotes correctly. Thanks @Saithej2k. (#2576)
+* ⌚ Show absolute timestamps on hover. Thanks @Saithej2k. (#2597)
+* 🚀 Improve performance when loading page list. Thanks @Koc. (#2380)
+* 🚀 Improve performance when collective has many members. Thanks @Koc.
+* 🙂 Fix emoji detection with PCRE < 10.35.
+* 🗑️ Fix restoring trashed pages with recent Server releases. Thanks @CarlSchwan.
+* 🐛 Stop navigation when page creation fails. Thanks @joshtrichards.
+* 🔎 Fix full-text search in public page shares. (#2345)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.4.2 - 2026.06.22
+
+### 🐛Fixes
+* 🔎 Improve full text search: better multi-word results, ranking and snippet preview. (#2577)
+* 🖨️ Ensure all images are loaded before opening print dialog. (#2562)
+* 🔗 Fix page previews on some instances with reverse proxy. (#2558)
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+
+
+## 4.4.1 - 2026.05.27
+
+Collectives now has its own little homepage: https://collectives.cloud/
+
+### 🐛Fixes
+* 🔎 Page picker: find landing page by searching for collective name. (#2024)
+* 🔎 Fix full-text search in public shares. (#2492)
+* 💄 Improve error handling with weak share password and password policy. (#2418)
+* 🏷️ Validate tag colors. (#2311)
+* 😀 Validate collective and page emojis.
+* 🔗 Register global Collectives link handler. (#2378)
+* 🐛 Fix collective actions from start page with extra action.
+* 🐛 Check share authentication in reference provider.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.4.0 - 2026.05.06
+
+A new page picker simplifies linking to other pages. Further improvements to the
+full-text search should make search results more accurate.
+
+The new Collectives user documentation is now available at
+https://docs.nextcloud.com/server/latest/user_manual/en/collectives/
+
+### ✨New
+* 🔗 New page picker for linking to other pages. (#2333)
+* ✨ Add Nextcloud 34 support.
+
+### 🐛Fixes
+* 🔎 Improve full text search: index exact words, add stopwords, minimize DB size.
+* 🔗 Fix "Share link" action in page list. (#2438)
+* 👥 Improve member list performance for collectives with many members. Thanks @Koc.
+* ⚙️ Allow setting Collectives user folder to hidden folder name. Thanks @Jerome-Herbinet.
+* 🐛 Don't log an error when refreshing an outdated session.
+* 🔒 Don't expose share password via JSON API. Thanks @tomaioo.
+* 🔒 Block tag management in page shares.
+* 🔒 Enforce collective edit level in public share editable flag.
+* 🔗 Update link to Transifex in Readme. Thanks @noantiq.
+* 💄 Overhaul app description and Readme.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.3.0 - 2026.04.21
+
+This release brings a reworked full-text search implementation. E.g. search
+results should be more accurate now.
+
+### ✨New
+* 🔎 New doctrine-based full-text search backend.
+* ⚙️ Allow to set default Collectives user folder via admin settings.
+* 💬 List collective members first when mentioning a user.
+
+### 🐛Fixes
+* 💄 Disable three-dots-menu in recent pages user avatar.
+* 💄 Make PageInfoBar pixel-perfect with Text menubar again.
+* 🐛 Don't persist page list display state.
+* 🐛 Use custom page sidebar toggle button.
+* 💄 Fix editor menubar to not overlay embedded calendar popup. Thanks @Koc.
+* 🐛 Don't ship stale CSS artifacts in release tarball.
+* 🐛 Validate template access when creating pages.
+* 🐛 Don't allow to access page trash in read-only shares.
+* 🐛 Don't try to fetch circle members in public shares.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.2.0 - 2026.03.25
+
+### ✨New
+* 🚀 Frontend migrated to Vue 3.
+
+### 🐛Fixes
+* 🔗 Add "Link to page" as first link action in Text menubar. (#2332)
+* 🔗 Bring back link to team overview. Thanks to @pymnh.
+* 💄 Make sure editor grows vertically and takes all available space.
+* 🗑️ Overhaul collectives trash to be more performant and user-friendly. Thanks to @Koc.
+* 🐛 Prevent path traversal via attachment path.
+* 🔎 Focus page filter on Ctrl-F. (#2303, #2317)
+* 🐛 Handle rename errors gracefully when mounting Collectives folder. (#2264, 2324)
+* 🚀 Improve frontend performance for collectives with many pages. (#XXX)
+* 🔗 Better previews for links to inaccessible pages. Thanks @pymnh.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.1.0 - 2026.03.12
+
+This release brings support to create new files (e.g. an office document or a
+whiteboard) from the "Insert attachment" menu. This feature will only be
+available after upgrading to the upcoming Nextcloud 32 and 33 server maintenance
+releases though, that get published on 26. March.
+
+### ✨New
+* ➕ Provide create file templates for Text attachments menu.
+
+### 🐛Fixes
+* 🔗 Don't link from PageInfoBar to versions in shares. Thanks to @pymnh.
+* 🐛 Add error handling for missing versions entity. Thanks to @solracsf.
+* 🗑️ Lazy-load page trash. Thanks to @Koc.
+* 🐛 Catch Circle::getInitiator exceptions during mountpoint setup.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 4.0.0 - 2026.02.26
+
+⚠️ Note: With this release, the Collectives folder in the Files app will be hidden by
+default. See [the documentation](https://nextcloud.github.io/collectives/usage/) if you
+still want to access it.
+
+### ✨New
+* 📂 Hide Collectives folder per default in Files app (#2095).
+* 📎 Enhanced attachments support in sidebar tab. Supports non-embedded attachments.
+* 📎 List folder attachments in sidebar tab.
+* 📥 Import Markdown files as pages and adjust relative links and attachment paths.
+* 🧹 Drop support for Nextcloud 31.
+
+### 🐛Fixes
+* 🐛 Setup filesystem if user folder was not found (#2264).
+* 💄 Add default value for text editor width (#2290).
+* 🚚 Copy metadata of subpages when copying a page.
+* 🔗 Fix missing page content in read-only shares in some cases (#2257).
+* 🐛 Catch error when adding members to collective. Thanks to @provokateurin.
+* 🐛 Scope trash node lookup to requested collective. Thanks to @benjaminfrueh.
+* 🔎 Continue full-text search indexing after one collective failed.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.6.1 - 2026.02.12
+
+### 🐛Fixes
+* 💄 Fix the page info bar height in page preview mode. (#2258)
+* 💄 Only delay closing collectives list if switching between collectives.
+* 💄 Add native tooltips to links in page info bar.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+
+
+## 3.6.0 - 2026.02.12
+
+### ✨New
+* 🚀 Make collectives user folder a mount point. (#2201, 2189)
+
+### 🐛Fixes
+* 🧹 Remove team overview button from landing page. It caused too much confusion.
+* ⏱️ Delay closing collectives list by one second.
+* 🚫 Add user trait to handle requests without user session. Thanks to @solracsf.
+* 🔐 Allow to rename a collective as admin. (#1716)
+* 💄 Fix title for existing share links.
+* 💄 Rename "Done" button to "Preview" to avoid confusion.
+* 💄 Fix hidden editor nodes drag handle. (#2098)
+* 💄 Fix new editor outline overlaying content.
+* 🔗 Add page slug + id to page share link. Thanks to @MrAn0nym.
+* 🚀 Use single query to get collectives mounts. Thanks to @Koc.
+* 🚀 Replace getById by getFistNodeById in backend. Thanks to @CarlSchwan.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.5.0 - 2026.01.12
+
+### ✨New
+* ✨ Add Nextcloud 33 support.
+
+### 🐛Fixes
+* 💄 Cleanup default landing page.
+* 🔗 Only link from PageInfoBar to versions sidebar tab we can edit. (#2169)
+* 💄 Small improvements to the tags modal. (#2162, #2163)
+* 🚀 Improve performance when cleaning subpage order.
+* 🔗 Fix download links in page list.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.4.0 - 2025.12.02
+
+### ✨New
+* 🔗 List number of backlinks and link to sidebar from page info bar. (#346)
+
+### 🐛Fixes
+* 🐛 Fix conflicts when opening internal and shared collective in parallel. Thanks @Koc.
+* 💄 Similar collective actions in page list and title of landing page. (#2057)
+* 🔗 Fix handling URLs with fragments in preview links. (#2044, #2096)
+* 💄 Ellipsise long tag names in tags modal.
+* 🏷️ Fix selecting and clearing color of page tags.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.3.0 - 2025.11.03
+
+### ✨New
+* 👷‍♀️ Add service worker that caches app assets for offline support. (#1772)
+* 📎 List number of attachments and link to sidebar from page info bar. (#346)
+
+### 🐛Fixes
+* 🔒 Fix validating password hash in public shares in Nextcloud 33.
+* 📁 Remove obsolete mimetype folder icon registration.
+* 🔎 Fix search in member picker when pasting into search field.
+* ⌛ Update last edited timestamp in page info bar.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.2.4 - 2025.10.26
+
+### 🐛Fixes
+* 🐛 Fix race condition with loading CollectiveExtraAction.
+
+
+## 3.2.3 - 2025.10.23
+
+### 🐛Fixes
+* 🐛 Fix page actions being disabled for subpages starting in second level.
+
+
+## 3.2.2 - 2025.10.23
+
+### 🐛Fixes
+* 👥 Improve UX around sharing and managing members. Thanks @silverkszlo (#2003)
+* 🐛 Detect landing page if it has a slug.
+* 💄 Improve missing app dependencies error message. Thanks @janbaum (#1700)
+* 💄 Better error message if collective name is too long. Thanks @cyan-1 (#1833)
+* 🔌 Don't fetch collectives when offline.
+* 🔌 Disable more features in UI when offline.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.2.1 - 2025.10.13
+
+### 🐛Fixes
+* 🐛 Separate files for CSS entry points.
+* 💄 Show similar options page actions menu of page list and page title.
+* 💄 Don't use a focus trap for the additional page tags popover.
+* 🐛 Fix broken session request in public shares.
+* 🐛 Save `deletedBy` for trashed pages.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.2.0 - 2025.10.07
+
+### ✨New
+* 🔌 Add offline state indicator.
+* 🔌 Disable some features in UI when offline.
+
+### 🐛Fixes
+* 💬 Clarify undo popup after leaving collective. (#1856)
+* 💄 Switch to more outline icons to follow Nextcloud 32 style.
+* 💄 Use filled star icon for favorites in page list.
+* 🐛 Disable drag and drop for page favorites.
+* 🐛 Sort favorite pages according to page list.
+* 🐛 Don't escape collective name in title. (#1690)
+* 🐛 Don't set current page as loading when moving another page.
+* 🏷️ Make tag filtering and sorting case-insensitive.
+* 🐛 Don't show a toast when no tags got deleted.
+* 🐛 Fix arrow buttons visual feedback in move/copy modal.
+* 💄 Fix color of remove button in members modal.
+* 💄 Make "Manage members" button tertiary.
+* 💄 Don't override text color for active page version element.
+* 🔌 Don't send API requests when offline.
+* 🐛 Always delete editor, fix race condition with dangling editor.
+* 🐛 Avoid loading state flipflop when first opening a page.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⚙️ Migrate from webpack to vite.
+* ⚙️ Migrate to eslint 9.
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.1.2 - 2025.09.01
+
+### 🚧Updates & Tooling
+* ⬆️ Bump guzzlehttp/guzzle from 7.9.3 to 7.10.0. (#1942)
+* ⬆️ Bump codecov/codecov-action from 5.4.3 to 5.5.0. (#1943)
+* ⬆️ Update dependency jest to ^30.1.1. (#1947)
+
+
+## 3.1.1 - 2025.08.18
+
+### 🐛Fixes
+* 💄 Switch to outline icons to follow Nextcloud 32 style.
+* ⬇️ Add action to download markdown file. (#1347)
+* 💄 Change editor width to 80ch.
+* 💄 Open collective automatically if only one exists. (#1924)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.1.0 - 2025.08.11
+
+### ✨New
+* 🏷️ Page tags. (#470, #1604, #1703)
+* 🚀 Send live page list updates directly via notify_push deamon.
+
+### 🐛Fixes
+* 🐛 Stop slugs migration early if it already ran.
+* ⌛ Raise session valid time to fix outdated active sessions.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.0.3 - 2025.07.28
+
+### 🐛Fixes
+* 📎 Load attachments in view mode. Thanks @emberfiend. (#1885)
+* 📎 Fix opening attachments in viewer from sidebar in public shares.
+* 🐛 Don't fetch templates in page shares.
+* ♻️ Avoid redundant navigation for URLs with hash.
+* 🐛 Fix displaying PageInfoBar with Nextcloud 32.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 3.0.2 - 2025.07.17
+
+### 🐛Fixes
+* Make sure slugs are generated upon app upgrades. (#1879)
+* Handle page slug routes without collective slug. (#1879)
+* Use sluggified URLs in dashboard links.
+* Fix page titles in recent pages widget.
+* Redirect to sluggified URL when browsing old URL format.
+
+
+## 3.0.1 - 2025.07.14
+
+### 🐛Fixes
+* 🪤 Catch more circles errors when generating slugs.
+
+
+## 3.0.0 - 2025.07.14
+
+### ✨New
+* 🏬 Persist collectives and pages metadata in browser local storage.
+* 🌐 Slugified URLs to collectives and pages. Thanks @Koc.
+* 🔥 Documented OCS API with OpenAPI specification. (#690)
+* 🧹 Remove Nextcloud 29 and PHP 8.0 support.
+
+### 🐛Fixes
+* 🧹 Remove debugYjs function.
+* 🔥 Only initialize a collective session as logged in user.
+* 🩹 Add getRevision function required by NC 32.
+* 🔗 Pass query params to axios using the params object.
+* 🔗 Fix URL to delete a session.
+* ⚙️  Use isNull and emptyString in slug queries.
+* 🚢 Prereleases don't need the nightly flag in app store.
+* 🔥 Fix URL to delete a collectives session.
+* 🪤 Catch missing circles when generating slugs.
+* 🧹 Remove unused linkHandler mixin.
+* 🔔 Fix tracking notify_push sessions.
+* 🖱️ Fix dropping page below last item in list. (#423)
+* 💄 Align "page not found" empty content vertically.
+* 💄 Polish hover effect on recent pages. Thanks @kra-mo.
+* 🐛 Fix ExpirePageVersions background job. (#1834)
+* 🔗 Fix default route in recent pages widget. (#1830)
+* 🔎 Show page path in page search results. (#1778)
+* 🔗 Resolve links to landing pages in page reference provider. (#701)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.18.0 - 2025.06.09
+
+### ✨New
+* 📜 Improved version support with named versions and authors. (#234)
+* 🚀 Faster loading when switching between collectives back and forth.
+* 🔃 Allow to sort pages descending by title/time. (#1680)
+* 🔎 Full text search in public shares. (#1790)
+
+### 🐛Fixes
+* 💄 Several smaller fixes around new templates management. (#1760)
+* 💄 Show title and emoji of landingpage in recent pages. (#1761)
+* 🐛 Fix listing members with latest server releases.
+* 💄 Ellipsise overflowing timestamp strings in recent pages. (#1786)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.17.1 - 2025.05.16
+
+### 🐛Fixes
+* Fix migration of templates via web updater. (#1763)
+
+
+## 2.17.0 - 2025.05.14
+
+### ✨New
+* 📝 New templates management. (#267, #1195)
+* 🛬 Overhauled landingpage widgets.
+* 🧹 Remove Nextcloud 27 + 28 support.
+* 🔔 Custom notifications for mentions in Nextcloud 31+. (#1469)
+
+### 🐛Fixes
+* 💄 Save title on submit when in view mode.
+* 💄 Make toolbar sticky to bottom on mobile.
+* 💄 Several design papercut fixes.
+* 🧹 Unset trash pages when switching the collective.
+* 🐛 Don't throw when adding subpage of page without metadata. (#1726)
+* 🧹 Hide recent pages widget if less than four pages.
+* 🧹 Hide team overview button if only one member.
+* 🖱️ Scroll to heading when opening anchor link to page. (#1736)
+* 💄 Fix jumping page order when adding a new page.
+* 🔃 Fix broken page list order after adding subpage. (#1360)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.16.3 - 2025.04.24
+
+### 🐛Fixes
+* 🖱️ Fix expanding/collapsing pages with subpages in the page list.
+
+
+## 2.16.2 - 2025.04.23
+
+### 🐛Fixes
+* 💄 Fix indention in page list.
+* 💄 Fix jumping page order when adding a new page.
+* 💄 Replace editor heading in landingpage with a thin line.
+* 💄 Fix sliding button style in recent pages widget.
+* 💄 Don't show team overview button in public shares. Thanks @tintou.
+* 🚀 Improve performance in collectives list request.
+* 🚀 Improve performance of dashboard request. Thanks @Koc.
+* 🖱️ Scroll favored page in page list into viewport (#1673)
+* 🖱️ Fix scroll container for page content. (#1740)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.16.1 - 2025.02.13
+
+### 🐛Fixes
+* 🚧build: exclude all hidden files and folders
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+## 2.16.0 - 2025.01.27
+
+### ✨New
+* ✨ Add Nextcloud 31 support
+
+### 🐛Fixes
+* ✅ Adjust tests to Nextcloud 31 login changes
+* 💽 Make collectives work with sharding
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.15.2 - 2024.12.18
+
+### 🐛Fixes
+* 🚀 Performance: use `probeCircles()` instead of `getCircles()`. (#498)
+* 📱 Fix positioning of outline. (#1614)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.15.1 - 2024.11.20
+
+### 🐛Fixes
+* 💄 Landing page widgets and page content in scroll container. (#1578)
+* 📱 Fix maximum editor/page width on mobile. (#1577)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.15.0 - 2024.10.29
+
+### ✨New
+* ⭐ Add support for page favorites. (#300)
+* 🔧 Add console function to debug sync/Yjs issues.
+
+### 🐛Fixes
+* 🖨️ Several print style fixes. (#1110)
+* 💄 Make page list header, landing page and trash sticky again. (#1523)
+* ⌛ Update timestamp in page info bar when page gets saves via "Done" button. (#1371)
+* 💄 Fix alignment of landing page widgets.
+* 🐎 Use storage id for performant index usage on dashboard query.
+* 🏛️ Add return types of storage wrapper.
+* 👷 Exclude rector.php from release tarball. (#1541)
+* 🔗 Fix page link in reference widgets for index pages.
+* 🔗 Preserve anchors in links of reference widgets. Thanks @Koc.
+* 🐛 Create index page if subfolders contain pages.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.14.4 - 2024.09.24
+
+### 🐛Fixes
+* 🛡️ Give public shares always permission of a simple user.
+* 💄 Use flexbox to align editor container and search dialog.
+* 🐘 Adjust PHP CollectiveStorage class to be compatible with Nextcloud 31.
+* 💄 Use dark SVG as widget icon. Thanks @Akhil. (#1475)
+* 👷 Run distclean as dependency of release in Makefile. (#1482)
+* 💄 Add bottom border to menubar.
+* 👷 Migrate development tools to vendor-bin.
+* 🔎 Add icon to clear the filter string. (#1501)
+* 🖱️ Close actions menu when scrolling members.
+* 🐛 Ignore folders if parent folder has no index page. (#1494)
+* 🙍 Use display name of own user instead of user ID. (#1504)
+* 🐛 Create landing page if missing. (#943)
+* 📂 Allow to mount the collectives user folder into a subfolder. (#514)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.14.3 - 2024.09.10
+
+### 🐛Fixes
+* 📝 Page content: ensure consistent state between view and edit mode. (#1437)
+* 🔎 Full text search index: Don't choke on missing files (#1448)
+* ♻️ Fix error on renaming a collective. (#1456)
+* 🎯 Page list: sort numbers numerically. (#1447)
+* 🎯 Page list: Calculate scroller height dynamically for filtered view. (#1339)
+* 🔗 Backlinks: detect links with title in markdown syntax. (#1451)
+* 📱 Navigation: show details when switching collective on mobile. (#1233)
+* 💄 Improve design of missing app error box. (#1330)
+* 🔎 Several fixes to search highlighting. (#1461)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.14.2 - 2024.08.23
+
+### 🐛Fixes
+* 🐛 Fix error "Could not fetch page trash" due to call on null. (#1435)
+* 🖱️ Fix moving page by drag and drop. (#1436)
+
+
+## 2.14.1 - 2024.08.21
+
+### 🐛Fixes
+* 💄 Refactor "New collectives" button, make it HTML spec compatible. (#1382)
+* 💄 Bring back top padding for titlebar on Nextcloud < 30. (#1426)
+* 🐛 Fix error "Could not fetch page trash" due to call on null. (#1431)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+
+## 2.14.0 - 2024.08.19
+
+### ✨New
+* 📝 Persist full page width setting in database. Thanks @Koc.
+* 🔒 Add rate limits to public page controller functions.
+
+### 🐛Fixes
+* 🍍 Migrate frontend vue store from vuex to pinia.
+* 💄 Several small UI fixes and improvements.
+* 🔒 Fix updating shares with empty password and password policy. (#1327)
+* ♻️ Migrate controller annotations to attributes.
+* ♻️ Migrate license/copyright headers to SPDX format.
+* 🐛 Fix error with v-click-outside in collectives trash.
+* 🔗 Fix public share detection in editor.
+* 🔎 Use proper editor API for search highlighting.
+* 🚀 Performance: only load files script for the files app.
+* 🚀 Performance: Optimize getPagesFromFolder function.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.13.0 - 2024.07.25
+
+### ✨New
+* ✨ Add Nextcloud 30 support, remove Nextcloud 26 support.
+* 🔎 Highlight search results from page list in page content. (#648)
+* 🖼️ Allow to lookup page references in public shares. (#1275)
+
+### 🐛Fixes
+* 🔒 Fix creating shares with password policy. (#1269)
+* 📌 Allow to toggle recent pages in public shares. (#1192)
+* 🧹 Reset filtered page list when switching collectives.
+* 🐛 Fix error when loading page references.
+* 💬 Separate message and details with a space in error toast messages.
+* 🐛 Don't show an error if the page trash is disabled.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.12.0 - 2024.06.11
+
+### ✨New
+* 🔎 Add content search to filter in page list. (#1094)
+* 🔔 Track notify_push sessions, notify all active users. (#1118)
+
+### 🐛Fixes
+* 🗑️ Always return trashed collectives as simple list. (#1289)
+* 🔃 Don't update last edit user when changing sort order. (#1122)
+* 📱 Unbreak editing on mobile. (#1232, #1293)
+* 🚪 Show 'Leave collective' option conditionally. (Fixes: #1103, #1259)
+* 💄 Fix displaying user bubble in view mode.
+* 💄 Center empty content in home and notfound view.
+* 💄 Fix resizing members widget according to available space.
+* 🐛 Fix console errors about debounced methods in different contexts.
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
+## 2.11.0 - 2024.05.16
+
+### ✨New
+* 🔒 Allow to protect shares with a password. (#505)
+* ✅ Add setup checks for PHP SQLite dependency. Thanks @hweihwang. (#1031)
+* 💄 Automatically open collective if only one exists for user. (#1241)
+
+### 🐛Fixes
+* 🖱️ Fix sorting in page list using drag and drop. (#1246, #1257)
+* 📄 Fix outdated page content in view mode. (#1194)
+* 🔎 List subpages when filtering page list. Thanks @grnd-alt. (#1190)
+* 📝 Improve documentation about app dependencies. (#1220)
+* 🗑️ Make trash backend compatible with Nextcloud 30.
+* 🔗 Improve wording for sharing options. Thanks @Jerome-Herbinet. (#1225)
+* 💄 Fix layout of delete collective modal. Thanks @elzody. (#1189, #1250)
+* 💄 Make sort order pill in page list pixel perfect when scrolling.
+* 🐛 Fix JS console error for recent page tiles without last changed user.
+* 💄 Use standard `""` quotes in collectives trash modal. (#1190)
+* ♿ Completely migrate from v-tooltip to native browser tooltips.
+* 📝 Add documentation about using group_everyone app. (#1202)
+
+### 🌎Translations
+* 🗣️ Translation updates from Transifex. Thanks to all contributors.
+
+### 🚧Updates & Tooling
+* ⬆️ Update NPM dependencies.
+* ⬆️ Update PHP composer dependencies.
+
+
 ## 2.10.1 - 2024.03.27
 
 ### 🐛Fixes

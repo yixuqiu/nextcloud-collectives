@@ -2,12 +2,18 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Mount;
 
-use OC;
 use OC\Files\Cache\Propagator;
 use OC\Files\Storage\Storage;
 use OC\Files\Storage\Wrapper\Wrapper;
+use OCP\IDBConnection;
+use OCP\Server;
 
 class NoExcludePropagatorStorageWrapper extends Wrapper {
 	/**
@@ -20,9 +26,7 @@ class NoExcludePropagatorStorageWrapper extends Wrapper {
 		if (!$storage) {
 			$storage = $this;
 		}
-		if (!isset($storage->propagator)) {
-			$storage->propagator = new Propagator($storage, OC::$server->getDatabaseConnection());
-		}
+		$storage->propagator ??= new Propagator($storage, Server::get(IDBConnection::class));
 		return $storage->propagator;
 	}
 }

@@ -1,6 +1,13 @@
+<!--
+  - SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<NcEmptyContent :name="t('collectives', 'Page not found: {page}', { page: pageParam })"
-		:description="t('collectives', 'Select a page from the list or create a new one.')">
+	<NcEmptyContent
+		:name="notFoundString"
+		:description="t('collectives', 'Select a page from the list or create a new one.')"
+		class="content-not-found">
 		<template #icon>
 			<PageIcon />
 		</template>
@@ -8,9 +15,11 @@
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
-import { NcEmptyContent } from '@nextcloud/vue'
+import { t } from '@nextcloud/l10n'
+import { mapState } from 'pinia'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import PageIcon from '../Icon/PageIcon.vue'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'PageNotFound',
@@ -21,9 +30,23 @@ export default {
 	},
 
 	computed: {
-		...mapGetters([
-			'pageParam',
-		]),
+		...mapState(useRootStore, ['pageParam', 'pageId']),
+
+		notFoundString() {
+			return this.pageParam
+				? t('collectives', 'Page not found: {page}', { page: this.pageParam })
+				: t('collectives', 'Page with ID {id} not found', { id: this.pageId })
+		},
+	},
+
+	methods: {
+		t,
 	},
 }
 </script>
+
+<style lang="scss" scoped>
+.content-not-found {
+	height: 100%;
+}
+</style>

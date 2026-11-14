@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Trash;
 
 use OCA\Files_Trashbin\Trash\ITrashBackend;
@@ -17,9 +22,10 @@ class CollectivePageTrashItem extends TrashItem {
 		string $trashPath,
 		FileInfo $fileInfo,
 		IUser $user,
-		private string $mountPoint
+		?IUser $deletedBy,
+		private readonly string $mountPoint,
 	) {
-		parent::__construct($backend, $originalLocation, $deletedTime, $trashPath, $fileInfo, $user);
+		parent::__construct($backend, $originalLocation, $deletedTime, $trashPath, $fileInfo, $user, $deletedBy);
 	}
 
 	public function isRootItem(): bool {

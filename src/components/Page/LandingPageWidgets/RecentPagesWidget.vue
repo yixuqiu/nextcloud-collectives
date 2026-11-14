@@ -1,34 +1,44 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="recent-pages-widget">
-		<a class="recent-pages-title"
+		<a
+			class="recent-pages-title"
 			:aria-label="expandLabel"
 			@keydown.enter="toggleWidget"
 			@click="toggleWidget">
 			<WidgetHeading :title="t('collectives', 'Recent pages')" />
 			<div class="toggle-icon">
-				<ChevronDownIcon :size="24"
-					:class="{ 'collapsed': !showRecentPages }" />
+				<ChevronDownIcon
+					:size="24"
+					:class="{ collapsed: !showRecentPages }" />
 			</div>
 		</a>
 		<div v-show="showRecentPages" class="recent-pages-widget-container">
 			<div ref="pageslider" class="recent-pages-widget-pages">
-				<RecentPageTile v-for="page in trimmedRecentPages"
+				<RecentPageTile
+					v-for="page in trimmedRecentPages"
 					:key="page.id"
-					:page="page" />
+					:page />
 			</div>
 			<div class="recent-pages-widget-buttons">
-				<button ref="buttonslideleft"
+				<button
+					ref="buttonslideleft"
 					class="button-slide button-slide__left hidden"
 					:aria-label="t('collectives', 'Scroll recent pages to the left')"
 					@click="slideLeft"
-					@keypress.enter.prevent="slideLeft">
+					@keydown.enter.prevent="slideLeft">
 					<ChevronLeftIcon :size="44" />
 				</button>
-				<button ref="buttonslideright"
+				<button
+					ref="buttonslideright"
 					class="button-slide button-slide__right hidden"
 					:aria-label="t('collectives', 'Scroll recent pages to the left')"
 					@click="slideRight"
-					@keypress.enter.prevent="slideRight">
+					@keydown.enter.prevent="slideRight">
 					<ChevronRightIcon :size="44" />
 				</button>
 			</div>
@@ -37,15 +47,18 @@
 </template>
 
 <script>
-import debounce from 'debounce'
-import { mapActions, mapGetters } from 'vuex'
 import { showError } from '@nextcloud/dialogs'
+import { t } from '@nextcloud/l10n'
+import debounce from 'debounce'
+import { mapActions, mapState } from 'pinia'
 import ChevronDownIcon from 'vue-material-design-icons/ChevronDown.vue'
 import ChevronLeftIcon from 'vue-material-design-icons/ChevronLeft.vue'
 import ChevronRightIcon from 'vue-material-design-icons/ChevronRight.vue'
 import RecentPageTile from './RecentPageTile.vue'
 import WidgetHeading from './WidgetHeading.vue'
-import { SET_COLLECTIVE_USER_SETTING_SHOW_RECENT_PAGES } from '../../../store/actions.js'
+import { useCollectivesStore } from '../../../stores/collectives.js'
+import { usePagesStore } from '../../../stores/pages.js'
+import { useRootStore } from '../../../stores/root.js'
 
 const SLIDE_OFFSET = 198
 
@@ -60,12 +73,16 @@ export default {
 		WidgetHeading,
 	},
 
+	data() {
+		return {
+			updateButtonsDebounced: debounce(this.updateButtons, 50),
+		}
+	},
+
 	computed: {
-		...mapGetters([
-			'currentCollective',
-			'isPublic',
-			'recentPages',
-		]),
+		...mapState(useRootStore, ['isPublic']),
+		...mapState(useCollectivesStore, ['currentCollective']),
+		...mapState(usePagesStore, ['recentPages']),
 
 		expandLabel() {
 			return this.showRecentPages
@@ -85,23 +102,28 @@ export default {
 
 	mounted() {
 		this.$nextTick(() => {
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		})
-		this.$refs.pageslider.addEventListener('scroll', this.updateButtons)
+		this.$refs.pageslider.addEventListener('scroll', this.updateButtonsDebounced)
 	},
 
-	unmounted() {
-		this.$refs.pageslider.removeEventListener('scroll', this.updateButtons)
+	beforeUnmount() {
+		this.$refs.pageslider.removeEventListener('scroll', this.updateButtonsDebounced)
 	},
 
 	methods: {
-		...mapActions({
-			dispatchSetUserShowRecentPages: SET_COLLECTIVE_USER_SETTING_SHOW_RECENT_PAGES,
-		}),
+		t,
+
+		...mapActions(useCollectivesStore, [
+			'patchCollectiveWithProperty',
+			'setCollectiveUserSettingShowRecentPages',
+		]),
 
 		toggleWidget() {
-			if (!this.isPublic) {
-				this.dispatchSetUserShowRecentPages({ id: this.currentCollective.id, showRecentPages: !this.showRecentPages })
+			if (this.isPublic) {
+				this.patchCollectiveWithProperty({ id: this.currentCollective.id, property: 'userShowRecentPages', value: !this.showRecentPages })
+			} else {
+				this.setCollectiveUserSettingShowRecentPages({ id: this.currentCollective.id, showRecentPages: !this.showRecentPages })
 					.catch((error) => {
 						console.error(error)
 						showError(t('collectives', 'Could not save recent pages setting for collective'))
@@ -109,16 +131,16 @@ export default {
 			}
 
 			if (this.showRecentPages) {
-				this.updateButtons()
+				this.updateButtonsDebounced()
 			}
 		},
 
-		updateButtons: debounce(function() {
+		updateButtons() {
 			const pagesliderEl = this.$refs.pageslider
 			if (!pagesliderEl) {
 				return
 			}
-			if (pagesliderEl.scrollLeft <= 0) {
+			if (pagesliderEl.scrollLeft <= 8) {
 				this.$refs.buttonslideleft.classList.add('hidden')
 			} else {
 				this.$refs.buttonslideleft.classList.remove('hidden')
@@ -129,7 +151,7 @@ export default {
 			} else {
 				this.$refs.buttonslideright.classList.remove('hidden')
 			}
-		}, 50),
+		},
 
 		slideLeft() {
 			const pagesliderEl = this.$refs.pageslider
@@ -139,7 +161,7 @@ export default {
 				left: pagesliderEl.scrollLeft = newScrollLeft,
 				behavior: 'smooth',
 			})
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		},
 
 		slideRight() {
@@ -151,7 +173,7 @@ export default {
 				left: pagesliderEl.scrollLeft = newScrollLeft,
 				behavior: 'smooth',
 			})
-			this.updateButtons()
+			this.updateButtonsDebounced()
 		},
 	},
 }
@@ -162,8 +184,8 @@ export default {
 	display: flex;
 
 	.toggle-icon {
-		padding-top: 25px;
-		padding-left: 8px;
+		display: flex;
+		padding: 24px 0 12px 8px;
 
 		.collapsed {
 			transition: transform var(--animation-slow);
@@ -174,15 +196,16 @@ export default {
 
 .recent-pages-widget-container {
 	position: relative;
-	padding-top: 12px;
 
 	.recent-pages-widget-pages {
 		display: flex;
 		flex-direction: row;
 		gap: 12px;
-
+		padding: 8px;
+		margin: -8px;
 		overflow-x: auto;
 		scroll-snap-type: x mandatory;
+		scroll-padding-inline-start: 8px;
 		// Hide scrollbar
 		scrollbar-width: none;
 		-ms-overflow-style: none;
@@ -194,35 +217,31 @@ export default {
 
 .button-slide {
 	position: absolute;
-	width: 100px;
+	width: fit-content;
 	height: 100%;
 	display: flex;
-	right: 0;
+	right: -8px;
 	top: 0;
-	bottom: 0;
 	padding: 0;
 	margin: 0 !important;
-	border: 0;
-	border-radius: 0;
-	z-index: 2;
 
 	&__left {
-		left: 0;
+		left: -8px;
 		justify-content: left;
 		background: linear-gradient(to left, rgba(0, 0, 0, 0), var(--color-main-background));
 
-		&:active {
-			background: linear-gradient(to left, rgba(0, 0, 0, 0), var(--color-main-background)) !important;
+		&:hover, &:focus, &:active {
+			background: var(--color-primary-element-light-hover);
 		}
 	}
 
 	&__right {
-		right: 0;
+		right: -8px;
 		justify-content: right;
 		background: linear-gradient(to right, rgba(0, 0, 0, 0), var(--color-main-background));
 
-		&:active {
-			background: linear-gradient(to right, rgba(0, 0, 0, 0), var(--color-main-background)) !important;
+		&:hover, &:focus, &:active {
+			background: var(--color-primary-element-light-hover);
 		}
 	}
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 Feature: pages
 
   Scenario: Create collective and first page
@@ -7,7 +10,7 @@ Feature: pages
     Then user "jane" sees pagePath "firstpage.md" in "BehatPagesCollective"
 
   Scenario: Upload and list attachment for page
-    When user "jane" uploads attachment "test.png" to "firstpage" with file path "/" in "BehatPagesCollective"
+    When user "jane" uploads attachment "test.png" via webdav to "firstpage" with file path "/" in "BehatPagesCollective"
     Then user "jane" sees attachment "test.png" with mimetype "image/png" for "firstpage" in "BehatPagesCollective"
 
   Scenario: Join collective (with pages) and create subpage
@@ -39,13 +42,26 @@ Feature: pages
     Then user "jane" sees pagePath "firstpage/subpage3.md" in "BehatPagesCollective"
     And user "jane" sees pagePath "firstpage (3).md" in "BehatPagesCollective"
 
+  Scenario: Copy subpages metadata
+    When user "jane" creates page "copypage1" with parentPath "Readme.md" in "BehatPagesCollective"
+    And user "alice" creates page "subcopypage" with parentPath "copypage1.md" in "BehatPagesCollective"
+    When user "jane" sets emoji for page "subcopypage" to "🍏" in "BehatPagesCollective"
+    When user "jane" copies page "copypage1" to "copypage2" with parentPath "Readme.md" in "BehatPagesCollective"
+    When user "jane" trashes page "copypage1" in "BehatPagesCollective"
+    When user "jane" sees emoji "🍏" for page "subcopypage" in "BehatPagesCollective"
+
   Scenario: Fails to move/copy landingpage
-    When user "jane" fails to move page "Readme" to "newnamepage" with parentPath "Readme.md" in "BehatPagesCollective"
-    When user "jane" fails to copy page "Readme" to "newnamepage" with parentPath "Readme.md" in "BehatPagesCollective"
+    When user "jane" fails to move page "Landing page" to "newnamepage" with parentPath "Readme.md" in "BehatPagesCollective"
+    When user "jane" fails to copy page "Landing page" to "newnamepage" with parentPath "Readme.md" in "BehatPagesCollective"
 
   Scenario: Change page emoji
     When user "jane" sets emoji for page "firstpage" to "🍏" in "BehatPagesCollective"
+    And user "jane" fails to set emoji for page "firstpage" to invalid "invalid" in "BehatPagesCollective"
     And user "jane" sets emoji for page "firstpage" to "" in "BehatPagesCollective"
+
+  Scenario: Change page full width
+    When user "jane" sets full width for page "firstpage" to "true" in "BehatPagesCollective"
+    And user "jane" sets full width for page "firstpage" to "false" in "BehatPagesCollective"
 
   Scenario: Change page subpageOrder
     When user "jane" sets subpageOrder for page "firstpage" to "[]" in "BehatPagesCollective"
@@ -74,12 +90,6 @@ Feature: pages
     And user "jane" sees pagePath "copythatpage.md" in "BehatPagesCollective"
     And user "jane" sees pagePath "copythatpage.md" in "BehatPagesCollective2"
 
-  Scenario: Create and use template page
-    When user "jane" creates page "Template" with parentPath "Readme.md" in "BehatPagesCollective"
-    And user "jane" creates page "Subtemplate" with parentPath "Template.md" in "BehatPagesCollective"
-    And user "jane" creates page "anotherpage" with parentPath "Readme.md" in "BehatPagesCollective"
-    Then user "jane" sees pagePath "anotherpage/Subtemplate.md" in "BehatPagesCollective"
-
   Scenario: Trash subpage
     When user "jane" trashes page "subpage" in "BehatPagesCollective"
     Then user "jane" doesn't see pagePath "parentpage/subpage.md" in "BehatPagesCollective"
@@ -107,11 +117,10 @@ Feature: pages
     And user "john" fails to touch page "secondpage" in "BehatPagesCollective"
     And user "john" fails to move page "secondpage" to "newnamepage" with parentPath "Readme.md" in "BehatPagesCollective"
     And user "john" fails to set emoji for page "secondpage" to "🍏" in "BehatPagesCollective"
+    And user "john" fails to set full width for page "secondpage" to "🍏" in "BehatPagesCollective"
     And user "john" fails to set subpageOrder for page "secondpage" to "[]" in "BehatPagesCollective"
     And user "john" fails to trash page "secondpage" in "BehatPagesCollective"
 
   Scenario: Trash and delete collective and team with all remaining pages
-    Then user "jane" trashes collective "BehatPagesCollective"
-    Then user "jane" trashes collective "BehatPagesCollective2"
-    And user "jane" deletes collective+team "BehatPagesCollective"
-    And user "jane" deletes collective+team "BehatPagesCollective2"
+    Then user "jane" trashes and deletes collective "BehatPagesCollective"
+    Then user "jane" trashes and deletes collective "BehatPagesCollective2"

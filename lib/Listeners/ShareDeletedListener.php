@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
 namespace OCA\Collectives\Listeners;
 
@@ -12,12 +16,14 @@ use OCP\Share\Events\ShareDeletedEvent;
 
 /** @template-implements IEventListener<Event|ShareDeletedEvent> */
 class ShareDeletedListener implements IEventListener {
-	public function __construct(private CollectiveShareMapper $shareMapper) {
+	public function __construct(
+		private readonly CollectiveShareMapper $shareMapper,
+	) {
 	}
 
 	public function handle(Event $event): void {
-		if (!($event instanceof ShareDeletedEvent) ||
-			!$event->getShare()->getToken()) {
+		if (!($event instanceof ShareDeletedEvent)
+			|| !$event->getShare()->getToken()) {
 			return;
 		}
 

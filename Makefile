@@ -1,11 +1,12 @@
-# This file is licensed under the Affero General Public License version 3 or
-# later. See the COPYING file.
+# SPDX-FileCopyrightText: 2020-2023 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Variables that can be overridden by env variables
 VERSION?=$(shell sed -ne 's/^\s*<version>\(.*\)<\/version>/\1/p' appinfo/info.xml)
 GIT_TAG?=v$(VERSION)
 OCC?=php ../../occ
 NPM?=npm
+PRERELEASE?=0
 
 # Release variables
 VERSION_CHANGELOG:=$(shell sed -ne 's/^\#\#\s\([0-9\.]\+-*\w*\)\s-\s.*$$/\1/p' CHANGELOG.md | head -n1 )
@@ -34,11 +35,11 @@ all: setup-dev lint build test
 setup-dev: composer-install node-modules
 
 # Install build tools
-composer:
-ifeq (, $(wildcard $(BUILD_TOOLS_DIR)/composer.phar))
+composer: $(BUILD_TOOLS_DIR)/composer.phar
+
+$(BUILD_TOOLS_DIR)/composer.phar:
 	mkdir -p $(BUILD_TOOLS_DIR)
 	cd $(BUILD_TOOLS_DIR) && curl -sS https://getcomposer.org/installer | php
-endif
 
 $(BUILD_TOOLS_DIR)/info.xsd:
 	mkdir -p $(BUILD_TOOLS_DIR)
@@ -57,14 +58,14 @@ composer-install-no-dev: composer
 
 # Clean build artifacts
 clean:
-	rm -rf js/*
+	rm -rf js/* css/*
 	rm -rf $(RELEASE_DIR)/$(APP_NAME)
 
 # Also remove build tools and dependencies
 distclean: clean
 	rm -rf $(BUILD_TOOLS_DIR)
 	rm -rf node_modules
-	rm -rf vendor
+	rm -rf vendor vendor-bin/*/vendor
 
 # Lint
 lint: lint-js lint-appinfo
@@ -85,7 +86,7 @@ test-php-unit:
 	$(CURDIR)/vendor/bin/phpunit --configuration tests/phpunit.xml
 
 test-php-integration:
-	$(CURDIR)/vendor/bin/behat --config=tests/Integration/config/behat.yml
+	$(CURDIR)/vendor/bin/behat --config=tests/Integration/behat.php
 
 test-js:
 	$(NPM) test
@@ -122,28 +123,37 @@ build: node-modules build-js-production composer-install-no-dev
 	fi
 	mkdir -p $(RELEASE_DIR)
 	rsync -a --delete --delete-excluded \
-		--exclude="$(APP_NAME)/.[a-z]*" \
+		--exclude="$(APP_NAME)/.**" \
+		--exclude="$(APP_NAME)/AGENTS.md" \
 		--exclude="$(APP_NAME)/Makefile" \
-		--exclude="$(APP_NAME)/Dockerfile" \
 		--exclude="$(APP_NAME)/TODO*" \
-		--exclude="$(APP_NAME)/babel.config.js" \
+		--exclude="$(APP_NAME)/babel.config.cjs" \
 		--exclude="$(APP_NAME)/build" \
 		--exclude="$(APP_NAME)/composer.*" \
 		--exclude="$(APP_NAME)/cypress" \
-		--exclude="$(APP_NAME)/cypress.config.js" \
+		--exclude="$(APP_NAME)/cypress.config.ts" \
 		--exclude="$(APP_NAME)/docs" \
-		--exclude="$(APP_NAME)/jest.config.json" \
+		--exclude="$(APP_NAME)/eslint.config.*" \
 		--exclude="$(APP_NAME)/jsconfig.json" \
 		--exclude="$(APP_NAME)/node_modules" \
 		--exclude="$(APP_NAME)/package-lock.json" \
 		--exclude="$(APP_NAME)/package.json" \
+		--exclude="$(APP_NAME)/playwright" \
+		--exclude="$(APP_NAME)/playwright-report" \
+		--exclude="$(APP_NAME)/playwright.config.ts" \
 		--exclude="$(APP_NAME)/psalm.xml" \
+		--exclude="$(APP_NAME)/rector.php" \
 		--exclude="$(APP_NAME)/renovate.json" \
 		--exclude="$(APP_NAME)/src" \
-		--exclude="$(APP_NAME)/stylelint.config.js" \
+		--exclude="$(APP_NAME)/stylelint.config.cjs" \
+		--exclude="$(APP_NAME)/test-results" \
 		--exclude="$(APP_NAME)/tests" \
-		--exclude="$(APP_NAME)/webpack.*" \
-	$(PROJECT_DIR) $(RELEASE_DIR)/
+		--exclude="$(APP_NAME)/tsconfig.json" \
+		--exclude="$(APP_NAME)/vendor-bin" \
+		--exclude="$(APP_NAME)/vendor/wamania/php-stemmer/test" \
+		--exclude="$(APP_NAME)/vite.*" \
+		--exclude="$(APP_NAME)/vitest.config.ts" \
+		$(PROJECT_DIR) $(RELEASE_DIR)/
 	@if [ -f $(CERT_DIR)/$(APP_NAME).key ]; then \
 		echo "Signing code…"; \
 		$(OCC) integrity:sign-app --privateKey="$(CERT_DIR)/$(APP_NAME).key" \
@@ -178,12 +188,16 @@ endif
 release: release-github release-appstore
 
 # Publish the release on Github
-release-github: release-checks lint-appinfo build
+release-github: release-checks lint-appinfo distclean build
 	# Git tag and push
 	git tag $(GIT_TAG) -m "Version $(VERSION)" && git push $(GIT_REMOTE) $(GIT_TAG)
 
 	# Publish the release on Github
+ifeq ($(PRERELEASE),1)
+	gh release create --prerelease --title "$(GIT_TAG)" $(GIT_TAG) ./build/release/$(APP_NAME)-$(VERSION).tar.gz
+else
 	gh release create --title "$(GIT_TAG)" $(GIT_TAG) ./build/release/$(APP_NAME)-$(VERSION).tar.gz
+endif
 
 	@echo "URL to release tarball (for app store): $(GITHUB_PROJECT_URL)/releases/download/$(GIT_TAG)/$(APP_NAME)-$(VERSION).tar.gz"
 

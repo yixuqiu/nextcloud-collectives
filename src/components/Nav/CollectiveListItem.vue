@@ -1,10 +1,15 @@
+<!--
+  - SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<NcAppNavigationItem :key="collective.circleId"
+	<NcAppNavigationItem
+		:key="collective.circleId"
 		:name="collective.name"
 		:to="collectivePath(collective)"
-		:force-menu="true"
-		:force-display-actions="isMobile"
-		class="collectives_list_item">
+		class="collectives_list_item"
+		@click="onClick">
 		<template #icon>
 			<template v-if="collective.emoji">
 				{{ collective.emoji }}
@@ -13,31 +18,24 @@
 				<CollectivesIcon :size="20" />
 			</template>
 		</template>
-		<template #actions>
-			<CollectiveActions :collective="collective" />
-		</template>
 	</NcAppNavigationItem>
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
-import { NcAppNavigationItem } from '@nextcloud/vue'
-import isMobile from '@nextcloud/vue/dist/Mixins/isMobile.js'
-import CollectiveActions from '../Collective/CollectiveActions.vue'
+import { emit } from '@nextcloud/event-bus'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+import { mapState } from 'pinia'
+import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
 import CollectivesIcon from '../Icon/CollectivesIcon.vue'
+import { useCollectivesStore } from '../../stores/collectives.js'
 
 export default {
 	name: 'CollectiveListItem',
 
 	components: {
 		NcAppNavigationItem,
-		CollectiveActions,
 		CollectivesIcon,
 	},
-
-	mixins: [
-		isMobile,
-	],
 
 	props: {
 		collective: {
@@ -46,10 +44,28 @@ export default {
 		},
 	},
 
+	setup() {
+		const isMobile = useIsMobile()
+		return { isMobile }
+	},
+
+	data() {
+		return {
+			collectiveSubmenu: null,
+		}
+	},
+
 	computed: {
-		...mapGetters([
-			'collectivePath',
-		]),
+		...mapState(useCollectivesStore, ['collectivePath']),
+	},
+
+	methods: {
+		onClick() {
+			if (this.isMobile) {
+				// Go straight to landingpage on mobile.
+				emit('toggle-navigation', { open: false })
+			}
+		},
 	},
 }
 </script>

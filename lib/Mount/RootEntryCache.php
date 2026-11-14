@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Mount;
 
 use OC\Files\Cache\Wrapper\CacheWrapper;
@@ -9,8 +14,10 @@ use OCP\Files\Cache\ICache;
 use OCP\Files\Cache\ICacheEntry;
 
 class RootEntryCache extends CacheWrapper {
-	public function __construct(ICache $cache,
-		private ?ICacheEntry $rootEntry) {
+	public function __construct(
+		ICache $cache,
+		private ?ICacheEntry $rootEntry,
+	) {
 		parent::__construct($cache);
 	}
 

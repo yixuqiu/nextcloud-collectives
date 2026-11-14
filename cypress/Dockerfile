@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2021-2023 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 FROM nextcloud:latest as source
 
 WORKDIR /tmp
@@ -9,8 +12,7 @@ RUN set -ex; \
 RUN set -ex; \
     git clone --depth 1 https://github.com/nextcloud/server.git; \
     git clone --depth 1 https://github.com/nextcloud/circles.git server/apps/circles; \
-    git clone --depth 1 https://github.com/nextcloud/text.git server/apps/text; \
-    git clone --depth 1 https://github.com/nextcloud/viewer.git server/apps/viewer;
+    git clone --depth 1 https://github.com/nextcloud/text.git server/apps/text;
 
 RUN set -ex; \
     cd server; \

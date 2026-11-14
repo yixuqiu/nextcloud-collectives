@@ -1,35 +1,29 @@
+<!--
+  - SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="backlinks-container">
-		<!-- loading -->
-		<NcEmptyContent v-if="loading('backlinks')">
-			<template #icon>
-				<NcLoadingIcon />
-			</template>
-		</NcEmptyContent>
-
-		<!-- error message -->
-		<NcEmptyContent v-else-if="error" :name="error">
-			<template #icon>
-				<AlertOctagonIcon />
-			</template>
-		</NcEmptyContent>
-
 		<!-- backlinks list -->
-		<div v-else-if="!loading('backlinks') && backlinks.length">
+		<div v-if="currentBacklinks.length">
 			<ul class="backlink-list">
-				<NcListItem v-for="backlinkPage in backlinks"
+				<NcListItem
+					v-for="backlinkPage in currentBacklinks"
 					:key="backlinkPage.id"
 					:name="pagePathTitle(backlinkPage)"
 					:to="pagePath(backlinkPage)"
 					class="backlink">
 					<template #icon>
-						<div v-if="backlinkPage.emoji"
+						<div
+							v-if="backlinkPage.emoji"
 							class="item-icon item-icon__emoji">
 							{{ backlinkPage.emoji }}
 						</div>
-						<PageIcon v-else
+						<PageIcon
+							v-else
 							:size="26"
-							fill-color="var(--color-main-background)"
+							fillColor="var(--color-main-background)"
 							class="item-icon item-icon__page" />
 					</template>
 					<template #subname>
@@ -40,9 +34,10 @@
 		</div>
 
 		<!-- no backlinks found -->
-		<NcEmptyContent v-else
+		<NcEmptyContent
+			v-else
 			:name="t('collectives', 'No backlinks available')"
-			:description="t( 'collectives', 'If other pages link to this one, they will be listed here.')">
+			:description="t('collectives', 'If other pages link to this one, they will be listed here.')">
 			<template #icon>
 				<ArrowBottomLeftIcon />
 			</template>
@@ -51,22 +46,21 @@
 </template>
 
 <script>
-import { mapActions, mapGetters, mapMutations, mapState } from 'vuex'
-import { NcEmptyContent, NcListItem, NcLoadingIcon } from '@nextcloud/vue'
+import { t } from '@nextcloud/l10n'
 import moment from '@nextcloud/moment'
-import AlertOctagonIcon from 'vue-material-design-icons/AlertOctagon.vue'
+import { mapState } from 'pinia'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcListItem from '@nextcloud/vue/components/NcListItem'
 import ArrowBottomLeftIcon from 'vue-material-design-icons/ArrowBottomLeft.vue'
 import PageIcon from '../Icon/PageIcon.vue'
-import { GET_BACKLINKS } from '../../store/actions.js'
+import { usePagesStore } from '../../stores/pages.js'
 
 export default {
 	name: 'SidebarTabBacklinks',
 
 	components: {
-		AlertOctagonIcon,
 		NcEmptyContent,
 		NcListItem,
-		NcLoadingIcon,
 		ArrowBottomLeftIcon,
 		PageIcon,
 	},
@@ -78,60 +72,24 @@ export default {
 		},
 	},
 
-	data() {
-		return {
-			error: '',
-		}
-	},
-
 	computed: {
-		...mapState({
-			backlinks: (state) => state.pages.backlinks,
-		}),
-		...mapGetters([
-			'loading',
+		...mapState(usePagesStore, [
+			'backlinks',
 			'pagePath',
 			'pagePathTitle',
 		]),
+
+		currentBacklinks() {
+			return this.backlinks(this.page.id)
+		},
 
 		lastUpdate() {
 			return (page) => moment.unix(page.timestamp).fromNow()
 		},
 	},
 
-	watch: {
-		'page.id'() {
-			this.load('backlinks')
-			this.unsetBacklinks()
-			this.getBacklinks()
-		},
-	},
-
-	mounted() {
-		this.load('backlinks')
-		this.getBacklinks()
-	},
-
 	methods: {
-		...mapMutations(['done', 'load', 'unsetBacklinks']),
-
-		...mapActions({
-			dispatchGetBacklinks: GET_BACKLINKS,
-		}),
-
-		/**
-		 * Get backlinks for a page
-		 */
-		async getBacklinks() {
-			try {
-				await this.dispatchGetBacklinks(this.page)
-			} catch (e) {
-				this.error = t('collectives', 'Could not get page backlinks')
-				console.error('Failed to get page backlinks', e)
-			} finally {
-				this.done('backlinks')
-			}
-		},
+		t,
 	},
 }
 </script>

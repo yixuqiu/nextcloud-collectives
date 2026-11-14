@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Service;
 
 use OCA\Circles\CirclesManager;
@@ -13,9 +18,10 @@ use OCA\Circles\Model\Circle;
 use OCA\Circles\Model\FederatedUser;
 use OCA\Circles\Model\Member;
 use OCA\Circles\Model\Probes\CircleProbe;
+use OCA\Circles\Model\Probes\DataProbe;
 use OCA\Circles\Tools\Exceptions\InvalidItemException;
-use OCP\AppFramework\QueryException;
 use OCP\AutoloadNotAllowedException;
+use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 
 class CircleHelper {
@@ -25,7 +31,7 @@ class CircleHelper {
 	public function __construct(ContainerInterface $appContainer) {
 		try {
 			$this->circlesManager = $appContainer->get(CirclesManager::class);
-		} catch (QueryException|AutoloadNotAllowedException $e) {
+		} catch (ContainerExceptionInterface|AutoloadNotAllowedException $e) {
 			// Could not instantiate - probably teams app is disabled
 			$this->dependencyInjectionError = $e->getMessage();
 		}
@@ -41,10 +47,11 @@ class CircleHelper {
 		}
 
 		try {
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			return $this->circlesManager->getFederatedUser($userId, Member::TYPE_USER);
 		} catch (CircleNotFoundException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
-		} catch (FederatedItemException |
+		} catch (FederatedItemException|
 				 RequestBuilderException $e) {
 				 	throw new NotPermittedException($e->getMessage(), 0, $e);
 				 }
@@ -83,10 +90,13 @@ class CircleHelper {
 	public function getCircles(?string $userId = null): array {
 		try {
 			$this->startSession($userId);
-			$probe = new CircleProbe();
-			$probe->mustBeMember();
-			$circles = $this->circlesManager->getCircles($probe, true);
-		} catch (RequestBuilderException |
+			$circleProbe = new CircleProbe();
+			$circleProbe->mustBeMember();
+			$dataProbe = new DataProbe();
+			$dataProbe->add(DataProbe::INITIATOR);
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
+			$circles = $this->circlesManager->probeCircles($circleProbe, $dataProbe);
+		} catch (RequestBuilderException|
 				 FederatedItemException $e) {
 				 	throw new NotPermittedException($e->getMessage(), 0, $e);
 				 }
@@ -107,10 +117,11 @@ class CircleHelper {
 			} else {
 				$this->startSession($userId);
 			}
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			$circle = $this->circlesManager->getCircle($circleId);
 		} catch (CircleNotFoundException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
-		} catch (RequestBuilderException |
+		} catch (RequestBuilderException|
 				 FederatedItemException $e) {
 				 	throw new NotPermittedException($e->getMessage(), 0, $e);
 				 }
@@ -127,8 +138,8 @@ class CircleHelper {
 	public function findCircle(string $name, string $userId, int $level = Member::LEVEL_MEMBER): ?Circle {
 		$circles = $this->getCircles($userId);
 		foreach ($circles as $circle) {
-			if (!strcmp(strtolower($circle->getName()), strtolower($name)) ||
-				!strcmp(strtolower($circle->getSanitizedName()), strtolower($name))) {
+			if (!strcmp(strtolower($circle->getName()), strtolower($name))
+				|| !strcmp(strtolower($circle->getSanitizedName()), strtolower($name))) {
 				if (!$this->hasLevel($circle->getSingleId(), $userId, $level)) {
 					return null;
 				}
@@ -142,17 +153,18 @@ class CircleHelper {
 	 * @throws NotPermittedException
 	 */
 	private function existsCircle(string $name): bool {
-		$this->circlesManager->startSuperSession();
+		$this->startSuperSession();
 		try {
-			$circles = $this->circlesManager->getCircles();
-		} catch (InitiatorNotFoundException | RequestBuilderException $e) {
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
+			$circles = $this->circlesManager->probeCircles();
+		} catch (InitiatorNotFoundException|RequestBuilderException $e) {
 			throw new NotPermittedException($e->getMessage(), 0, $e);
 		}
 		$this->circlesManager->stopSession();
 
 		foreach ($circles as $circle) {
-			if (!strcmp(strtolower($circle->getName()), strtolower($name)) ||
-				!strcmp(strtolower($circle->getSanitizedName()), strtolower($name))) {
+			if (!strcmp(strtolower($circle->getName()), strtolower($name))
+				|| !strcmp(strtolower($circle->getSanitizedName()), strtolower($name))) {
 				return true;
 			}
 		}
@@ -172,11 +184,12 @@ class CircleHelper {
 				throw new CircleExistsException('A team with that name exists');
 			}
 			$this->startSession($userId);
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			$circle = $this->circlesManager->createCircle($name, null, false, false);
 		} catch (CircleNotFoundException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
-		} catch (RequestBuilderException |
-				 FederatedItemException |
+		} catch (RequestBuilderException|
+				 FederatedItemException|
 				 InvalidItemException $e) {
 				 	throw new NotPermittedException($e->getMessage(), 0, $e);
 				 }
@@ -190,10 +203,11 @@ class CircleHelper {
 	 * @throws NotPermittedException
 	 */
 	public function flagCircleAsAppManaged(string $circleId): void {
-		$this->circlesManager->startSuperSession();
+		$this->startSuperSession();
 		try {
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			$this->circlesManager->flagAsAppManaged($circleId);
-		} catch (RequestBuilderException |
+		} catch (RequestBuilderException|
 		FederatedItemException $e) {
 			throw new NotPermittedException($e->getMessage(), 0, $e);
 		}
@@ -204,10 +218,11 @@ class CircleHelper {
 	 * @throws NotPermittedException
 	 */
 	public function unflagCircleAsAppManaged(string $circleId): void {
-		$this->circlesManager->startSuperSession();
+		$this->startSuperSession();
 		try {
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			$this->circlesManager->flagAsAppManaged($circleId, false);
-		} catch (RequestBuilderException |
+		} catch (RequestBuilderException|
 				 FederatedItemException $e) {
 				 	throw new NotPermittedException($e->getMessage(), 0, $e);
 				 }
@@ -226,10 +241,11 @@ class CircleHelper {
 		try {
 			$this->unflagCircleAsAppManaged($circleId);
 			$this->startSession($userId);
+			/** @psalm-suppress PossiblyNullReference - we check if circlesManager is null */
 			$this->circlesManager->destroyCircle($circleId);
 		} catch (CircleNotFoundException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
-		} catch (RequestBuilderException |
+		} catch (RequestBuilderException|
 			FederatedItemException $e) {
 				throw new NotPermittedException($e->getMessage(), 0, $e);
 			}
@@ -252,12 +268,43 @@ class CircleHelper {
 			$member = $circle->getInitiator();
 		} catch (CircleNotFoundException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
-		} catch (RequestBuilderException |
-			FederatedItemException $e) {
-				throw new NotPermittedException($e->getMessage(), 0, $e);
-			}
+		} catch (RequestBuilderException|FederatedItemException $e) {
+			throw new NotPermittedException($e->getMessage(), 0, $e);
+		}
 
 		return $member->getLevel();
+	}
+
+	/**
+	 * @throws NotFoundException
+	 * @throws NotPermittedException
+	 * @throws MissingDependencyException
+	 */
+	public function canLeave(string $circleId, string $userId): bool {
+		if (is_null($this->circlesManager)) {
+			throw new MissingDependencyException($this->dependencyInjectionError);
+		}
+
+		try {
+			$this->startSession($userId);
+			$circle = $this->circlesManager->getCircle($circleId);
+			$initiator = $circle->getInitiator();
+			if ($initiator->getUserType() !== Member::TYPE_USER) {
+				return false;
+			}
+			$members = $circle->getMembers(2);
+		} catch (CircleNotFoundException $e) {
+			throw new NotFoundException($e->getMessage(), 0, $e);
+		}
+
+		// if there is at least 1 more user in this circle
+		foreach ($members as $member) {
+			if ($member->getSingleId() !== $initiator->getSingleId()) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

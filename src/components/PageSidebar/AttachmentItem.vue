@@ -1,0 +1,409 @@
+<!--
+  - SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<template>
+	<NcListItem
+		:name="attachment.name"
+		:href="isPublic ? davUrl : filesUrl"
+		forceDisplayActions
+		class="attachment"
+		:class="{ mobile: isMobile }"
+		@dragstart="onDragstart"
+		@click="onClick">
+		<template #icon>
+			<div class="icon-container">
+				<img
+					lazy="true"
+					:src="previewUrl"
+					alt=""
+					height="256"
+					width="256"
+					class="attachment__image">
+				<DeleteIcon v-if="isDeleted" :size="36" class="attachment__image-overlay" />
+			</div>
+		</template>
+		<template #subname>
+			<div class="attachment__info">
+				<span class="attachment__info_size">{{ formattedFilesize }}</span>
+				<span class="attachment__info_size">·</span>
+				<span :title="formattedDate">{{ relativeDate }}</span>
+			</div>
+		</template>
+		<template #actions>
+			<NcActionButton
+				v-if="isEmbedded"
+				closeAfterClick
+				@click="scrollTo()">
+				<template #icon>
+					<EyeIcon />
+				</template>
+				{{ t('collectives', 'View in page') }}
+			</NcActionButton>
+			<NcActionButton
+				v-if="!isEmbedded && !isDeleted && !isInFolder && editorApiAttachments && isTextEdit && currentCollectiveCanEdit"
+				closeAfterClick
+				@click="onInsert">
+				<template #icon>
+					<FileDocumentPlusOutlineIcon />
+				</template>
+				{{ t('collectives', 'Add to page') }}
+			</NcActionButton>
+			<NcActionButton
+				v-if="isDeleted && currentCollectiveCanEdit"
+				closeAfterClick
+				@click="$emit('restore')">
+				<template #icon>
+					<RestoreIcon />
+				</template>
+				{{ t('collectives', 'Restore') }}
+			</NcActionButton>
+			<NcActionLink
+				v-if="!isDeleted"
+				:href="davUrl"
+				:download="attachment.name"
+				:class="{ 'action-link--disabled': !networkOnline }"
+				closeAfterClick>
+				<template #icon>
+					<DownloadIcon />
+				</template>
+				{{ t('collectives', 'Download') }}
+			</NcActionLink>
+			<NcActionLink
+				v-if="!isDeleted && !isPublic"
+				:href="filesUrl"
+				:class="{ 'action-link--disabled': !networkOnline }"
+				closeAfterClick>
+				<template #icon>
+					<FolderIcon />
+				</template>
+				{{ t('collectives', 'Show in Files') }}
+			</NcActionLink>
+			<NcActionButton
+				v-if="!isDeleted && !isInFolder && currentCollectiveCanEdit"
+				closeAfterClick
+				:class="{ 'action-link--disabled': !networkOnline }"
+				@click="$emit('rename')">
+				<template #icon>
+					<PencilOutlineIcon />
+				</template>
+				{{ t('collectives', 'Rename') }}
+			</NcActionButton>
+			<NcActionButton
+				v-if="!isDeleted && !isInFolder && currentCollectiveCanEdit"
+				closeAfterClick
+				:class="{ 'action-link--disabled': !networkOnline }"
+				@click="$emit('delete')">
+				<template #icon>
+					<DeleteIcon />
+				</template>
+				{{ t('collectives', 'Delete') }}
+			</NcActionButton>
+		</template>
+	</NcListItem>
+</template>
+
+<script>
+import { getCurrentUser } from '@nextcloud/auth'
+import { emit } from '@nextcloud/event-bus'
+import { formatFileSize } from '@nextcloud/files'
+import { getRootPath } from '@nextcloud/files/dav'
+import { t } from '@nextcloud/l10n'
+import moment from '@nextcloud/moment'
+import { generateRemoteUrl, generateUrl } from '@nextcloud/router'
+import { canView, getViewer } from '@nextcloud/viewer'
+import { NcActionButton, NcActionLink, NcListItem } from '@nextcloud/vue'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+import { mapState } from 'pinia'
+import DeleteIcon from 'vue-material-design-icons/DeleteOutline.vue'
+import EyeIcon from 'vue-material-design-icons/EyeOutline.vue'
+import FileDocumentPlusOutlineIcon from 'vue-material-design-icons/FileDocumentPlusOutline.vue'
+import FolderIcon from 'vue-material-design-icons/FolderOutline.vue'
+import PencilOutlineIcon from 'vue-material-design-icons/PencilOutline.vue'
+import RestoreIcon from 'vue-material-design-icons/Restore.vue'
+import DownloadIcon from 'vue-material-design-icons/TrayArrowDown.vue'
+import { useNetworkState } from '../../composables/useNetworkState.ts'
+import { editorApiAttachments } from '../../constants.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
+import { attachmentDavUrl } from '../../util/attachmentDavUrl.ts'
+import { encodeAttachmentFilename } from '../../util/attachmentFilename.ts'
+import { fileNode, legacyCanView, legacyViewer } from '../../util/viewer.ts'
+
+export default {
+	name: 'AttachmentItem',
+
+	components: {
+		DeleteIcon,
+		EyeIcon,
+		FileDocumentPlusOutlineIcon,
+		FolderIcon,
+		DownloadIcon,
+		NcActionButton,
+		NcActionLink,
+		NcListItem,
+		PencilOutlineIcon,
+		RestoreIcon,
+	},
+
+	props: {
+		attachment: {
+			type: Object,
+			required: true,
+		},
+
+		isEmbedded: {
+			type: Boolean,
+			default: false,
+		},
+
+		isDeleted: {
+			type: Boolean,
+			default: false,
+		},
+	},
+
+	emits: [
+		'delete',
+		'rename',
+		'restore',
+	],
+
+	setup() {
+		const isMobile = useIsMobile()
+		const { networkOnline } = useNetworkState()
+		return { isMobile, networkOnline }
+	},
+
+	computed: {
+		...mapState(useRootStore, [
+			'editorApiFlags',
+			'isPublic',
+			'shareTokenParam',
+			'showingSidebar',
+		]),
+
+		...mapState(useCollectivesStore, ['currentCollectiveCanEdit']),
+
+		...mapState(usePagesStore, [
+			'currentPage',
+			'currentPageDavUrl',
+			'isTextEdit',
+		]),
+
+		editorApiAttachments() {
+			return this.editorApiFlags.includes(editorApiAttachments)
+		},
+
+		isInFolder() {
+			return this.attachment.type === 'folder'
+		},
+
+		attachmentPreview() {
+			const searchParams = '&x=64&y=64&a=true'
+			return this.isPublic
+				? generateUrl(`/apps/files_sharing/publicpreview/${this.shareTokenParam}?fileId=${this.attachment.id}&file=${encodeURI(this.attachment.path)}${searchParams}`)
+				: generateUrl(`/core/preview?fileId=${this.attachment.id}${searchParams}`)
+		},
+
+		previewUrl() {
+			return this.attachment.hasPreview
+				? this.attachmentPreview
+				: OC.MimeType.getIconUrl(this.attachment.mimetype ?? 'undefined')
+		},
+
+		filesUrl() {
+			return generateUrl(`/f/${this.attachment.id}`)
+		},
+
+		pathSplit() {
+			return (filepath) => {
+				const lastSlashIndex = filepath.lastIndexOf('/')
+				const path = filepath.substring(0, lastSlashIndex)
+				const filename = filepath.substring(lastSlashIndex + 1)
+				return [path, filename]
+			}
+		},
+
+		davUrl() {
+			if (this.isPublic) {
+				// Share endpoints take paths relative to the share root, not the collective root
+				const [path, filename] = this.pathSplit(this.attachment.path)
+				return generateUrl('s/{token}/download?path=/{path}&files={filename}', {
+					token: this.shareTokenParam,
+					path: path || '/',
+					filename,
+				})
+			}
+			return generateRemoteUrl(`dav/files/${getCurrentUser()?.uid}/${this.currentPage.collectivePath}/${encodeURI(this.attachment.internalPath)}`)
+		},
+
+		formattedFilesize() {
+			return formatFileSize(this.attachment.filesize)
+		},
+
+		formattedDate() {
+			return moment.unix(this.attachment.timestamp).format('LLL')
+		},
+
+		relativeDate() {
+			return moment.unix(this.attachment.timestamp).fromNow()
+		},
+	},
+
+	methods: {
+		t,
+
+		getActiveTextElement() {
+			return this.isTextEdit
+				? document.querySelector('[data-collectives-el="editor"]')
+				: document.querySelector('[data-collectives-el="reader"]')
+		},
+
+		scrollTo() {
+			const candidates = [...this.getActiveTextElement().querySelectorAll('[data-component="image-view"]')]
+			const element = candidates.find((el) => el.dataset.src.endsWith(encodeAttachmentFilename(this.attachment.name)))
+			if (element) {
+				// Scroll into view
+				element.scrollIntoView({ block: 'center' })
+				// Highlight
+				element.children[0].classList.add('highlight-animation')
+				setTimeout(() => {
+					element.children[0].classList.remove('highlight-animation')
+				}, 5000)
+			}
+		},
+
+		onDragstart(event) {
+			if (this.isInFolder) {
+				return
+			}
+
+			const url = this.davUrl
+			const html = `<img src="${this.attachment.src}" alt="${this.attachment.name}">`
+
+			event.dataTransfer.effectAllowed = 'link'
+			event.dataTransfer.setData('text/plain', url)
+			event.dataTransfer.setData('text/uri-list', url)
+			event.dataTransfer.setData('text/html', html)
+		},
+
+		async onClick(event) {
+			// Show in viewer if the viewer can open the attachment
+			let node
+			try {
+				node = fileNode({
+					id: this.attachment.id,
+					source: attachmentDavUrl(this.currentPageDavUrl, this.attachment),
+					mime: this.attachment.mimetype,
+					root: getRootPath(),
+				})
+			} catch (error) {
+				// Let the link handle the click
+				console.error('Failed to open attachment in viewer', error)
+				return
+			}
+			if (canView(node)) {
+				event.preventDefault()
+				const wasOpen = this.showingSidebar
+				const session = await getViewer().open([node], node)
+				if (!wasOpen) {
+					session.addEventListener('close', () => emit('collectives:page-sidebar', { open: false, tab: 'attachments' }), { once: true })
+				}
+			} else if (legacyCanView(this.attachment.mimetype)) {
+				// Needed for Nextcloud 35 and below. Can be removed once we only support Nextcloud 36+
+				event.preventDefault()
+				legacyViewer().open({ path: this.attachment.path })
+			}
+		},
+
+		onInsert() {
+			emit('collectives:attachment:insert', {
+				name: this.attachment.name,
+			})
+			this.scrollTo(this.attachment)
+		},
+	},
+}
+</script>
+
+<style lang="scss" scoped>
+.attachment {
+	display: flex;
+	flex-direction: row;
+
+	:deep(.line-one__name) {
+		font-weight: normal;
+	}
+
+	&__info {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 0.5rem;
+
+		&__size {
+			color: var(--color-text-lighter);
+		}
+	}
+
+	.icon-container {
+		position: relative;
+		display: flex;
+
+	}
+
+	&__image {
+		width: 3rem;
+		height: 3rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--border-radius-large);
+	}
+
+	&__image-overlay {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		color: var(--color-text-maxcontrast-background-blur);
+		background: var(--color-main-background-blur);
+
+		width: 100%;
+		height: 100%;
+		border-radius: var(--border-radius-large);
+	}
+
+	&.mobile, &:hover, &:focus, &:active {
+		:deep(.list-item-content__actions) {
+			visibility: visible;
+		}
+	}
+}
+
+.attachment-list-subheading {
+	display: flex;
+	align-items: center;
+	padding: 0.3rem 8px;
+	font-weight: bold;
+
+	.hint-icon {
+		color: var(--color-primary-element);
+	}
+
+	.hint-body {
+		max-width: 300px;
+		padding: var(--border-radius-element);
+	}
+}
+
+.action-link--disabled {
+	pointer-events: none;
+	opacity: .5;
+}
+
+:deep(.list-item-content__actions) {
+	visibility: hidden;
+}
+</style>

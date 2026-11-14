@@ -1,0 +1,210 @@
+<!--
+  - SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<template>
+	<div class="page-container">
+		<PageTitleBar
+			:isFullWidth
+			@focusEditor="focusEditor"
+			@saveEditor="saveEditor" />
+		<PageTags v-if="tagsLoaded" :isFullWidth />
+		<div class="page-scroll-container">
+			<LandingPageWidgets v-if="isLandingPage" :isFullWidth />
+			<TextEditor :key="`text-editor-${currentPageId}`" ref="texteditor" :isFullWidth />
+		</div>
+		<SearchDialog :show="shouldShowSearchDialog" />
+	</div>
+</template>
+
+<script>
+import { emit, subscribe, unsubscribe } from '@nextcloud/event-bus'
+import debounce from 'debounce'
+import { mapActions, mapState } from 'pinia'
+import LandingPageWidgets from './Page/LandingPageWidgets.vue'
+import PageTags from './Page/PageTags.vue'
+import PageTitleBar from './Page/PageTitleBar.vue'
+import SearchDialog from './Page/SearchDialog.vue'
+import TextEditor from './Page/TextEditor.vue'
+import { useNetworkState } from '../composables/useNetworkState.ts'
+import { usePagesStore } from '../stores/pages.js'
+import { useRootStore } from '../stores/root.js'
+import { useSearchStore } from '../stores/search.js'
+import { useTagsStore } from '../stores/tags.js'
+
+export default {
+	name: 'PageContainer',
+
+	components: {
+		LandingPageWidgets,
+		PageTags,
+		PageTitleBar,
+		TextEditor,
+		SearchDialog,
+	},
+
+	setup() {
+		const { networkOnline } = useNetworkState()
+		return { networkOnline }
+	},
+
+	data() {
+		return {
+			loadPending: true,
+			onAttachmentsEvent: debounce(() => this.getAttachmentsForPage(false), 1000),
+		}
+	},
+
+	computed: {
+		...mapState(useRootStore, [
+			'done',
+			'isTextEdit',
+			'load',
+			'showingSidebar',
+		]),
+
+		...mapState(useTagsStore, ['tagsLoaded']),
+		...mapState(usePagesStore, [
+			'currentPage',
+			'currentPageId',
+			'isLandingPage',
+		]),
+
+		...mapState(useSearchStore, [
+			'shouldShowSearchDialog',
+		]),
+
+		isFullWidth() {
+			return this.currentPage.isFullWidth
+		},
+	},
+
+	watch: {
+		currentPageId: function() {
+			this.onAttachmentsEvent.clear()
+			this.setAttachmentsError(false)
+			this.setAttachmentsLoaded(false)
+			this.getAttachmentsForPage(true)
+		},
+
+		networkOnline: function(val) {
+			if (val && this.loadPending) {
+				this.getAttachmentsForPage(false)
+			}
+		},
+
+		showingSidebar: {
+			handler(val) {
+				emit(val ? 'files:sidebar:opened' : 'files:sidebar:closed')
+			},
+
+			flush: 'post',
+		},
+	},
+
+	mounted() {
+		this.getAttachmentsForPage(true)
+		// Reload attachment list on event from Text
+		subscribe('text:image-node:add', this.onAttachmentsEvent)
+		subscribe('collectives:page-sidebar', this.toggleSidebar)
+		subscribe('viewer:sidebar:open', this.onViewerSidebarOpen)
+	},
+
+	beforeUnmount() {
+		this.onAttachmentsEvent.clear()
+		unsubscribe('text:image-node:add', this.onAttachmentsEvent)
+		unsubscribe('collectives:page-sidebar', this.toggleSidebar)
+		unsubscribe('viewer:sidebar:open', this.onViewerSidebarOpen)
+	},
+
+	methods: {
+		...mapActions(useRootStore, [
+			'hideSidebar',
+			'setActiveSidebarTab',
+			'showSidebar',
+		]),
+
+		...mapActions(usePagesStore, [
+			'getAttachments',
+			'setAttachmentsError',
+			'setAttachmentsLoaded',
+		]),
+
+		focusEditor() {
+			this.$refs.texteditor.focusEditor()
+		},
+
+		saveEditor() {
+			if (this.isTextEdit) {
+				this.$refs.texteditor.save()
+			}
+		},
+
+		/**
+		 * Get attachments for current page
+		 *
+		 * @param {boolean} setLoading Whether to set loading attribute
+		 */
+		async getAttachmentsForPage(setLoading = false) {
+			this.loadPending = true
+			if (!this.networkOnline) {
+				return
+			}
+
+			if (setLoading) {
+				this.load('attachments')
+			}
+			try {
+				await this.getAttachments(this.currentPage)
+				this.setAttachmentsLoaded(true)
+				this.loadPending = false
+			} catch (e) {
+				this.setAttachmentsError(true)
+				console.error('Failed to get page attachments', e)
+			} finally {
+				this.done('attachments')
+			}
+		},
+
+		toggleSidebar({ open, tab }) {
+			if (open) {
+				this.showSidebar()
+			} else {
+				this.hideSidebar()
+			}
+			this.setActiveSidebarTab(tab)
+		},
+
+		onViewerSidebarOpen() {
+			// The viewer also asks for the sidebar when it shows a file next to the
+			// open sidebar, e.g. when comparing versions from the versions tab
+			if (!this.showingSidebar) {
+				this.toggleSidebar({ open: true, tab: 'attachments' })
+			}
+		},
+	},
+}
+</script>
+
+<style lang="scss" scoped>
+.page-container {
+	// Required for search dialog to stick to the bottom
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.page-scroll-container {
+	display: flex;
+	flex-direction: column;
+	overflow-y: auto;
+
+	// Make search dialog stick to the bottom
+	flex-grow: 1;
+}
+</style>
+
+<style lang="scss">
+@use '../css/editor.scss';
+</style>

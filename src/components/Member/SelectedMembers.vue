@@ -1,17 +1,26 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<transition-group v-if="hasSelectedMembers"
+	<transition-group
+		v-if="hasSelectedMembers"
 		name="zoom"
 		tag="div"
 		class="selected-members">
-		<NcUserBubble v-for="member in selectedMembers"
+		<NcUserBubble
+			v-for="member in selectedMembers"
 			:key="`member-${member.source}-${member.id}`"
 			:margin="0"
 			:size="22"
-			:display-name="member.label"
-			:avatar-image="selectedMemberAvatarImage(member)"
+			:displayName="member.label"
+			:avatarImage="selectedMemberAvatarImage(member)"
+			:primary="isCurrentUser(member)"
 			class="selected-member-bubble">
 			<template v-if="selectedMemberDeletable(member)" #title>
-				<a href="#"
+				<a
+					href="#"
 					:title="t('collectives', 'Remove {name}', { name: member.label })"
 					class="selected-member-bubble-delete"
 					@click="deleteMember(member)">
@@ -23,7 +32,9 @@
 </template>
 
 <script>
-import { NcUserBubble } from '@nextcloud/vue'
+import { getCurrentUser } from '@nextcloud/auth'
+import { t } from '@nextcloud/l10n'
+import NcUserBubble from '@nextcloud/vue/components/NcUserBubble'
 import CloseIcon from 'vue-material-design-icons/Close.vue'
 
 export default {
@@ -39,6 +50,7 @@ export default {
 			type: Object,
 			required: true,
 		},
+
 		noDeleteMembers: {
 			type: Array,
 			default() {
@@ -47,7 +59,15 @@ export default {
 		},
 	},
 
+	emits: [
+		'deleteFromSelection',
+	],
+
 	computed: {
+		isCurrentUser() {
+			return (member) => member.source === 'users' && member.label === getCurrentUser().uid
+		},
+
 		hasSelectedMembers() {
 			return Object.keys(this.selectedMembers).length !== 0
 		},
@@ -62,8 +82,10 @@ export default {
 	},
 
 	methods: {
+		t,
+
 		deleteMember(member) {
-			this.$emit('delete-from-selection', member)
+			this.$emit('deleteFromSelection', member)
 		},
 	},
 }

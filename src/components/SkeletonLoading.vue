@@ -1,46 +1,57 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="placeholder-main">
 		<!-- Placeholder animation -->
-		<template v-for="(suffix, gradientIndex) in ['-regular', '-reverse']">
-			<svg :key="'gradient' + suffix" :class="'placeholder-gradient placeholder-gradient' + suffix">
+		<template
+			v-for="(suffix, gradientIndex) in ['-regular', '-reverse']"
+			:key="'placeholder-' + suffix">
+			<svg :class="'placeholder-gradient placeholder-gradient' + suffix">
 				<defs>
-					<linearGradient :id="'placeholder-gradient' + suffix">
+					<linearGradient :id="'placeholder-gradient-' + uniqueId + suffix">
 						<stop offset="0%" :stop-color="(gradientIndex === 0) ? colorPlaceholderLight : colorPlaceholderDark" />
 						<stop offset="100%" :stop-color="(gradientIndex === 0) ? colorPlaceholderDark : colorPlaceholderLight" />
 					</linearGradient>
 				</defs>
 			</svg>
 
-			<ul :key="'list' + suffix" :class="'placeholder-list placeholder-list' + suffix + ' placeholder-list-' + type">
+			<ul :class="'placeholder-list placeholder-list' + suffix + ' placeholder-list-' + type">
 				<li v-for="(width, index) in placeholderData" :key="'placeholder' + suffix + index">
-					<svg v-if="type === 'items' || type === 'members-list'"
+					<svg
+						v-if="type === 'items' || type === 'members-list'"
 						:class="`${type}-placeholder`"
 						xmlns="http://www.w3.org/2000/svg"
-						:fill="'url(#placeholder-gradient' + suffix + ')'">
+						:fill="'url(#placeholder-gradient-' + uniqueId + suffix + ')'">
 						<circle :class="`${type}-placeholder-icon`" />
 						<rect :class="`${type}-placeholder-line-one`" :style="width" />
 					</svg>
-					<svg v-if="type === 'page-heading'"
+					<svg
+						v-if="type === 'page-heading'"
 						class="page-heading-placeholder"
 						xmlns="http://www.w3.org/2000/svg"
-						:fill="'url(#placeholder-gradient' + suffix + ')'">
+						:fill="'url(#placeholder-gradient-' + uniqueId + suffix + ')'">
 						<circle class="page-heading-placeholder-icon" />
 						<rect class="page-heading-placeholder-line-one" :style="width" />
 						<rect class="page-heading-placeholder-line-two" />
 					</svg>
-					<svg v-if="type === 'text'"
+					<svg
+						v-if="type === 'text'"
 						class="text-placeholder"
 						xmlns="http://www.w3.org/2000/svg"
-						:fill="'url(#placeholder-gradient' + suffix + ')'">
+						:fill="'url(#placeholder-gradient-' + uniqueId + suffix + ')'">
 						<rect class="text-placeholder-line-one" :style="textPlaceholderData[0]" />
 						<rect class="text-placeholder-line-two" :style="textPlaceholderData[1]" />
 						<rect class="text-placeholder-line-three" :style="textPlaceholderData[2]" />
 						<rect class="text-placeholder-line-four" :style="textPlaceholderData[3]" />
 					</svg>
-					<svg v-if="type === 'avatar'"
+					<svg
+						v-if="type === 'avatar'"
 						class="avatar-placeholder"
 						xmlns="http://www.w3.org/2000/svg"
-						:fill="'url(#placeholder-gradient' + suffix + ')'">
+						:fill="'url(#placeholder-gradient-' + uniqueId + suffix + ')'">
 						<circle class="avatar-placeholder-icon" />
 					</svg>
 				</li>
@@ -50,6 +61,7 @@
 </template>
 
 <script>
+import uniqueIdMixin from '../mixins/uniqueIdMixin.js'
 const bodyStyles = window.getComputedStyle(document.body)
 const colorPlaceholderDark = bodyStyles.getPropertyValue('--color-placeholder-dark')
 const colorPlaceholderLight = bodyStyles.getPropertyValue('--color-placeholder-light')
@@ -57,11 +69,14 @@ const colorPlaceholderLight = bodyStyles.getPropertyValue('--color-placeholder-l
 export default {
 	name: 'SkeletonLoading',
 
+	mixins: [uniqueIdMixin],
+
 	props: {
 		type: {
 			type: String,
 			required: true,
 		},
+
 		count: {
 			type: Number,
 			default: 5,
@@ -84,6 +99,7 @@ export default {
 			}
 			return data
 		},
+
 		textPlaceholderData() {
 			const data = []
 			for (let i = 0; i < 4; i++) {
@@ -97,9 +113,9 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-$clickable-area: 40px;
+$clickable-area: calc(var(--default-clickable-area) - 4px);
 $margin: 8px;
-$messages-list-max-width: 670px;
+$messages-list-max-width: 80ch;
 
 .placeholder-main {
 	max-width: $messages-list-max-width;
@@ -144,37 +160,37 @@ $messages-list-max-width: 670px;
 	&-icon {
 		width: $clickable-area;
 		height: $clickable-area;
-		cx: calc(#{$clickable-area} / 2);
-		cy: calc(#{$clickable-area} / 2);
-		r: calc(#{$clickable-area} / 2);
+		cx: calc($clickable-area / 2);
+		cy: calc($clickable-area / 2);
+		r: calc($clickable-area / 2);
 	}
 }
 
 .items-placeholder,
 .members-list-placeholder {
-	width: calc(100% - 2 * #{$margin});
+	width: calc(100% - 2 * $margin);
 	height: $clickable-area;
 	margin: 2px 0 -1px 0;
 
 	&-line-one {
-		width: calc(100% - #{$margin + $clickable-area});
+		width: calc(100% - $margin + $clickable-area);
 		position: relative;
 		height: 1.5em;
-		x: $margin + $clickable-area;
-		y: 10px;
+		x: calc($margin + $clickable-area);
+		y: 6px;
 	}
 }
 
 .members-list-placeholder {
-	$icon-size: 44px;
-	height: $icon-size + 8;
+	$icon-size: var(--default-clickable-area);
+	height: calc($icon-size + 8px);
 
 	&-icon {
 		width: $icon-size;
 		height: $icon-size;
-		cx: calc(#{$icon-size + 8} / 2);
-		cy: calc(#{$icon-size + 8} / 2);
-		r: calc(#{$icon-size} / 2);
+		cx: calc(($icon-size + 8px) / 2);
+		cy: calc(($icon-size + 8px) / 2);
+		r: calc($icon-size / 2);
 
 	}
 
@@ -185,22 +201,21 @@ $messages-list-max-width: 670px;
 }
 
 .avatar-placeholder {
-	$icon-size: 44px;
+	$icon-size: var(--default-clickable-area);
 	height: $icon-size;
 	width: $icon-size;
 
 	&-icon {
 		width: $icon-size;
 		height: $icon-size;
-		cx: calc(#{$icon-size} / 2);
-		cy: calc(#{$icon-size} / 2);
-		r: calc(#{$icon-size} / 2);
+		cx: calc($icon-size / 2);
+		cy: calc($icon-size / 2);
+		r: calc($icon-size / 2);
 	}
 }
 
 .page-heading-placeholder {
 	width: min($messages-list-max-width, 100vw);
-	height: calc(#{$clickable-area} * 2);
 	margin: 12px 14px;
 	display: block;
 
@@ -208,8 +223,8 @@ $messages-list-max-width: 670px;
 		width: min($messages-list-max-width, 100vw);
 		position: relative;
 		height: 2em;
-		x: $margin + 4 + $clickable-area;
-		y: 6px;
+		x: calc($margin + 4px + $clickable-area);
+		y: 2px;
 	}
 
 	&-line-two {
@@ -232,7 +247,7 @@ $messages-list-max-width: 670px;
 	&-line-two,
 	&-line-three,
 	&-line-four {
-		width: 670px;
+		width: 80ch;
 		height: 1em;
 	}
 

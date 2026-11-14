@@ -2,64 +2,74 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Controller;
 
-use Closure;
-
 use OCA\Circles\Model\Member;
+use OCA\Collectives\Db\Collective;
 use OCA\Collectives\Db\CollectiveShareMapper;
+use OCA\Collectives\ResponseDefinitions;
 use OCA\Collectives\Service\CollectiveService;
 use OCA\Collectives\Service\NotFoundException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\MultipleObjectsReturnedException;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\AnonRateLimit;
+use OCP\AppFramework\Http\Attribute\PublicPage;
 use OCP\AppFramework\Http\DataResponse;
-use OCP\AppFramework\PublicShareController;
+use OCP\AppFramework\OCS\OCSForbiddenException;
+use OCP\AppFramework\OCS\OCSNotFoundException;
 use OCP\IRequest;
-use OCP\ISession;
 use Psr\Log\LoggerInterface;
 
-class PublicCollectiveController extends PublicShareController {
-	use ErrorHelper;
+/**
+ * Provides access to public collective and page shares.
+ *
+ * @psalm-import-type CollectivesCollective from ResponseDefinitions
+ */
+class PublicCollectiveController extends CollectivesPublicOCSController {
+	use OCSExceptionHelper;
 
-	public function __construct(string $AppName,
+	public function __construct(
+		string $appName,
 		IRequest $request,
 		private CollectiveShareMapper $collectiveShareMapper,
 		private CollectiveService $service,
-		ISession $session,
-		private LoggerInterface $logger) {
-		parent::__construct($AppName, $request, $session);
-	}
-
-	protected function getPasswordHash(): string {
-		return '';
+		private LoggerInterface $logger,
+	) {
+		parent::__construct($appName, $request);
 	}
 
 	public function isValidToken(): bool {
 		try {
 			$this->collectiveShareMapper->findOneByToken($this->getToken());
-		} catch (DoesNotExistException | MultipleObjectsReturnedException) {
+		} catch (DoesNotExistException|MultipleObjectsReturnedException) {
 			return false;
 		}
 
 		return true;
 	}
 
-	protected function isPasswordProtected(): bool {
-		return false;
-	}
-
-	private function prepareResponse(Closure $callback) : DataResponse {
-		return $this->handleErrorResponse($callback, $this->logger);
-	}
-
 	/**
-	 * @PublicPage
+	 * Get public collective/page share by token
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collectives: list<CollectivesCollective>}, array{}>
+	 * @throws OCSForbiddenException Not permitted
+	 * @throws OCSNotFoundException Public collective/page share not found
+	 *
+	 * 200: Public collective/page share returned
 	 */
-	public function get(int $pageId = 0): DataResponse {
-		return $this->prepareResponse(function () use ($pageId): array {
+	#[PublicPage]
+	#[AnonRateLimit(limit: 10, period: 60)]
+	public function get(): DataResponse {
+		$collective = $this->handleErrorResponse(function (): Collective {
 			try {
 				$share = $this->collectiveShareMapper->findOneByToken($this->getToken());
-			} catch (DoesNotExistException | MultipleObjectsReturnedException $e) {
+			} catch (DoesNotExistException|MultipleObjectsReturnedException $e) {
 				throw new NotFoundException('Failed to get shared collective', 0, $e);
 			}
 			$collective = $this->service->getCollectiveWithShare($share->getCollectiveId(),
@@ -67,9 +77,8 @@ class PublicCollectiveController extends PublicShareController {
 				$share->getToken());
 			// Explicitly set member level
 			$collective->setLevel(Member::LEVEL_MEMBER);
-			return [
-				"data" => [$collective],
-			];
-		});
+			return $collective;
+		}, $this->logger);
+		return new DataResponse(['collectives' => [$collective]]);
 	}
 }

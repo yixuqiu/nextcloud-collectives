@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2025 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Playwright Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    strategy:
+        fail-fast: false
+        matrix:
+            server-branch: ['stable33', 'master']
+            shardIndex: [1, 2, 3, 4]
+            shardTotal: [4]
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check composer.json
+        id: check_composer
+        uses: andstor/file-existence-action@558493d6c74bf472d87c84eab196434afc2fa029 # v3.1.0
+        with:
+          files: 'composer.json'
+
+      - name: Install composer dependencies
+        if: steps.check_composer.outputs.files_exists == 'true'
+        run: composer install --no-dev
+
+      - name: Read package.json
+        uses: nextcloud-libraries/parse-package-engines-action@39fcc545a815c353dd0a3fd8fd2ef6e59fd02b92 # v0.2.0
+        id: versions
+
+      - name: Set up node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.versions.outputs.node-version }}
+
+      - name: Set up npm
+        run: npm i -g 'npm@${{ steps.versions.outputs.package-manager-version }}'
+
+      - name: Install node dependencies & build app
+        env:
+          CYPRESS_INSTALL_BINARY: 0
+        run: |
+          npm ci
+          npm run build --if-present
+
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium --only-shell
+
+      - name: Run Playwright tests
+        run: npx playwright test --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        env:
+          PLAYWRIGHT_NC_SERVER_BRANCH: ${{ matrix.server-branch }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report_${{ matrix.server-branch }}_shard${{ matrix.shardIndex }}
+          path: |
+            test-results/
+            blob-report/
+          retention-days: 7
+
+  summary:
+    runs-on: ubuntu-latest-low
+    needs: playwright
+    if: always()
+    name: playwright-summary
+    steps:
+      - name: Summary status
+        run: if ${{ needs.playwright.result != 'success' && needs.playwright.result != 'skipped' }}; then exit 1; fi

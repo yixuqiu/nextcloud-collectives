@@ -2,149 +2,217 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Controller;
 
-use Closure;
-
 use OCA\Collectives\Db\Collective;
-use OCA\Collectives\Fs\NodeHelper;
+use OCA\Collectives\ResponseDefinitions;
+use OCA\Collectives\Service\CircleExistsException;
 use OCA\Collectives\Service\CollectiveService;
-use OCP\AppFramework\Controller;
+use OCA\Collectives\Service\UnprocessableEntityException;
+use OCA\Guests\GuestManager;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\AppFramework\OCS\OCSBadRequestException;
+use OCP\AppFramework\OCS\OCSForbiddenException;
+use OCP\AppFramework\OCS\OCSNotFoundException;
+use OCP\AppFramework\OCSController;
 use OCP\Constants;
 use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\L10N\IFactory;
+use OCP\Server;
 use Psr\Log\LoggerInterface;
 
-class CollectiveController extends Controller {
-	use ErrorHelper;
+/**
+ * Provides access to collectives.
+ *
+ * @psalm-import-type CollectivesCollective from ResponseDefinitions
+ */
+class CollectiveController extends OCSController {
+	use OCSExceptionHelper;
+	use UserTrait;
 
-	public function __construct(string $AppName,
+	public function __construct(
+		string $appName,
 		IRequest $request,
 		private CollectiveService $service,
 		private IUserSession $userSession,
 		private IFactory $l10nFactory,
 		private LoggerInterface $logger,
-		private NodeHelper $nodeHelper) {
-		parent::__construct($AppName, $request);
-	}
-
-	private function getUserId(): string {
-		return $this->userSession->getUser()->getUID();
+		private ?string $userId,
+	) {
+		parent::__construct($appName, $request);
 	}
 
 	private function getUserLang(): string {
 		return $this->l10nFactory->getUserLanguage($this->userSession->getUser());
 	}
 
-	private function prepareResponse(Closure $callback): DataResponse {
-		return $this->handleErrorResponse($callback, $this->logger);
+	private function isGuest(): bool {
+		return class_exists(GuestManager::class) && Server::get(GuestManager::class)->isGuest($this->userId);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Get collectives
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collectives: list<CollectivesCollective>}, array{}>
+	 * @throws OCSNotFoundException Something not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collectives returned
 	 */
+	#[NoAdminRequired]
 	public function index(): DataResponse {
-		return $this->prepareResponse(fn (): array => [
-			"data" => $this->service->getCollectivesWithShares($this->getUserId()),
-		]);
+		$collectives = $this->handleErrorResponse(fn (): array => $this->service->getCollectivesWithShares($this->getUid()), $this->logger);
+		return new DataResponse(['collectives' => $collectives]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Create a collective
+	 *
+	 * @param string $name Name of the collective
+	 * @param ?string $emoji Optional emoji
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective, info: string}, array{}>
+	 * @throws OCSBadRequestException Collective or team already exists
+	 * @throws OCSNotFoundException Something not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective created
 	 */
+	#[NoAdminRequired]
 	public function create(string $name, ?string $emoji = null): DataResponse {
-		return $this->prepareResponse(function () use ($name, $emoji): array {
-			$safeName = $this->nodeHelper->sanitiseFilename($name);
-			[$collective, $info] = $this->service->createCollective(
-				$this->getUserId(),
-				$this->getUserLang(),
-				$safeName,
-				$emoji,
-			);
-			return [
-				"data" => $collective,
-				"message" => $info,
-			];
-		});
+		if ($this->isGuest()) {
+			throw new OCSForbiddenException('Guests are not allowed to create collectives');
+		}
+
+		try {
+			[$collective, $info] = $this->handleErrorResponse(function () use ($name, $emoji): array {
+				[$collective, $info] = $this->service->createCollective(
+					$this->getUid(),
+					$this->getUserLang(),
+					$name,
+					$emoji,
+				);
+				return [$collective, $info];
+			}, $this->logger);
+		} catch (CircleExistsException|UnprocessableEntityException $e) {
+			$this->logger->debug('Collectives app team exists error: ' . $e->getMessage(), ['exception' => $e]);
+			throw new OCSBadRequestException($e->getMessage());
+		}
+		return new DataResponse(['collective' => $collective, 'info' => $info]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Update an existing collective
+	 *
+	 * @param int $id ID of the collective
+	 * @param ?string $emoji Optional emoji
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective}, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective updated
 	 */
+	#[NoAdminRequired]
 	public function update(int $id, ?string $emoji = null): DataResponse {
-		return $this->prepareResponse(function () use ($id, $emoji): array {
-			$collective = $this->service->updateCollective(
-				$id,
-				$this->getUserId(),
-				$emoji
-			);
-			return [
-				"data" => $collective,
-			];
-		});
+		$collective = $this->handleErrorResponse(fn (): Collective => $this->service->updateCollective(
+			$id,
+			$this->getUid(),
+			$emoji
+		), $this->logger);
+		return new DataResponse(['collective' => $collective]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set edit level for an existing collective
+	 *
+	 * @param int $id ID of the collective
+	 * @param int $level Edit level
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective}, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective updated
 	 */
+	#[NoAdminRequired]
 	public function editLevel(int $id, int $level): DataResponse {
-		return $this->prepareResponse(function () use ($id, $level): array {
-			$collective = $this->service->setPermissionLevel(
-				$id,
-				$this->getUserId(),
-				$level,
-				Collective::editPermissions
-			);
-			return [
-				"data" => $collective,
-			];
-		});
+		$collective = $this->handleErrorResponse(fn (): Collective => $this->service->setPermissionLevel(
+			$id,
+			$this->getUid(),
+			$level,
+			Collective::editPermissions
+		), $this->logger);
+		return new DataResponse(['collective' => $collective]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set share level for an existing collective
+	 *
+	 * @param int $id ID of the collective
+	 * @param int $level Share level
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective}, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective updated
 	 */
+	#[NoAdminRequired]
 	public function shareLevel(int $id, int $level): DataResponse {
-		return $this->prepareResponse(function () use ($id, $level): array {
-			$collective = $this->service->setPermissionLevel(
-				$id,
-				$this->getUserId(),
-				$level,
-				Constants::PERMISSION_SHARE
-			);
-			return [
-				"data" => $collective,
-			];
-		});
+		$collective = $this->handleErrorResponse(fn (): Collective => $this->service->setPermissionLevel(
+			$id,
+			$this->getUid(),
+			$level,
+			Constants::PERMISSION_SHARE
+		), $this->logger);
+		return new DataResponse(['collective' => $collective]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set page mode for an existing collective
+	 *
+	 * @param int $id ID of the collective
+	 * @param int $mode Page edit mode
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective}, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective updated
 	 */
+	#[NoAdminRequired]
 	public function pageMode(int $id, int $mode): DataResponse {
-		return $this->prepareResponse(function () use ($id, $mode): array {
-			$collective = $this->service->setPageMode(
-				$id,
-				$this->getUserId(),
-				$mode,
-			);
-			return [
-				"data" => $collective,
-			];
-		});
+		$collective = $this->handleErrorResponse(fn (): Collective => $this->service->setPageMode(
+			$id,
+			$this->getUid(),
+			$mode,
+		), $this->logger);
+		return new DataResponse(['collective' => $collective]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Trash an existing collective
+	 *
+	 * @param int $id ID of the collective
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{collective: CollectivesCollective}, array{}>
+	 * @throws OCSNotFoundException Collective not found
+	 * @throws OCSForbiddenException Not permitted
+	 *
+	 * 200: Collective trashed
 	 */
+	#[NoAdminRequired]
 	public function trash(int $id): DataResponse {
-		return $this->prepareResponse(function () use ($id): array {
-			$collective = $this->service->trashCollective($id, $this->getUserId());
-			return [
-				"data" => $collective,
-			];
-		});
+		$collective = $this->handleErrorResponse(fn (): Collective => $this->service->trashCollective($id, $this->getUid()), $this->logger);
+		return new DataResponse(['collective' => $collective]);
 	}
 }

@@ -1,14 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Controller;
 
 use OCA\Collectives\Controller\SettingsController;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
-use OCP\IConfig;
+use OCP\AppFramework\OCS\OCSBadRequestException;
+use OCP\Config\IUserConfig;
 use OCP\IRequest;
-use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
+use Test\TestCase;
 
 class SettingsControllerTest extends TestCase {
 	private SettingsController $settingsController;
@@ -19,56 +26,50 @@ class SettingsControllerTest extends TestCase {
 		$request = $this->getMockBuilder(IRequest::class)
 			->disableOriginalConstructor()
 			->getMock();
-		$config = $this->getMockBuilder(IConfig::class)
-			->disableOriginalConstructor()
-			->getMock();
-		$logger = $this->getMockBuilder(LoggerInterface::class)
+		$userConfig = $this->getMockBuilder(IUserConfig::class)
 			->disableOriginalConstructor()
 			->getMock();
 
 		$this->settingsController = new SettingsController(
 			'collectives',
 			$request,
-			$config,
-			$logger,
+			$userConfig,
 			'jane'
 		);
 	}
 
 	public function testSetUserSettingInvalidSetting(): void {
-		$response = new DataResponse('Unsupported setting nonexistent', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('nonexistent', 'value'));
-	}
-
-	public function testSetUserSettingsEmptyValue(): void {
-		$response = new DataResponse('Empty value for setting user_folder', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', null));
+		$this->expectException(OCSBadRequestException::class);
+		$this->settingsController->setUserSetting('nonexistent', 'value');
 	}
 
 	public function testSetUserSettingsEmptyString(): void {
-		$response = new DataResponse('Invalid collectives folder path', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', ''));
+		$this->expectException(OCSBadRequestException::class);
+		$this->settingsController->setUserSetting('user_folder', '');
 	}
 
 	public function testSetUserSettingsNoSlashStart(): void {
-		$response = new DataResponse('Invalid collectives folder path', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', 'test'));
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', '/test/'));
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', 'test/'));
+		$this->expectException(OCSBadRequestException::class);
+		$this->settingsController->setUserSetting('user_folder', 'test');
 	}
 
 	public function testSetUserSettingsRootFolder(): void {
-		$response = new DataResponse('Invalid collectives folder path', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', '/'));
+		$this->expectException(OCSBadRequestException::class);
+		$this->settingsController->setUserSetting('user_folder', '/');
 	}
 
-	public function testSetUserSettingsMultipleSlashes(): void {
-		$response = new DataResponse('Invalid collectives folder path', Http::STATUS_BAD_REQUEST);
-		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', '/test/'));
+	public function testSetUserSettingsSlashEnd(): void {
+		$this->expectException(OCSBadRequestException::class);
+		$this->settingsController->setUserSetting('user_folder', '/test/');
 	}
 
 	public function testSetUserSettings(): void {
-		$response = new DataResponse('/test', Http::STATUS_OK);
+		$response = new DataResponse(['user_folder' => '/test'], Http::STATUS_OK);
 		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', '/test'));
+	}
+
+	public function testSetUserSettingsSubfolder(): void {
+		$response = new DataResponse(['user_folder' => '/test/abc'], Http::STATUS_OK);
+		self::assertEquals($response, $this->settingsController->setUserSetting('user_folder', '/test/abc'));
 	}
 }

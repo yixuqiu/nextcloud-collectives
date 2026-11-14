@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Migration;
 
 use Closure;
@@ -14,11 +19,11 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 class Version020802Date20231004000000 extends SimpleMigrationStep {
-	private IDBConnection $connection;
 	private bool $runPageModeMigration = false;
 
-	public function __construct(IDBConnection $connection) {
-		$this->connection = $connection;
+	public function __construct(
+		private readonly IDBConnection $connection,
+	) {
 	}
 
 	public function changeSchema(IOutput $output, Closure $schemaClosure, array $options): ?ISchemaWrapper {
@@ -36,7 +41,7 @@ class Version020802Date20231004000000 extends SimpleMigrationStep {
 
 			// Required to allow setting other columns without providing a value for `page_order`
 			if ($table->hasColumn('page_order')) {
-				$table->changeColumn('page_order', [
+				$table->modifyColumn('page_order', [
 					'default' => 0,
 				]);
 			}
@@ -46,7 +51,7 @@ class Version020802Date20231004000000 extends SimpleMigrationStep {
 
 		if ($table->getColumn('settings')->getType() === Type::getType('json')) {
 			// `settings` column exists and is JSON, migrate to STRING
-			$table->changeColumn('settings', [
+			$table->modifyColumn('settings', [
 				'type' => Type::getType('string')
 			]);
 			return $schema;
@@ -67,10 +72,10 @@ class Version020802Date20231004000000 extends SimpleMigrationStep {
 				->set('settings', $update->createParameter('newSettings'))
 				->where($update->expr()->eq('id', $update->createParameter('id')));
 
-			while ($row = $result->fetch()) {
+			while ($row = $result->fetchAssociative()) {
 				$newSettings = json_encode(['page_order' => (int)$row['page_order']], JSON_THROW_ON_ERROR);
 				$update
-					->setParameter('id', (int) $row['id'], IQueryBuilder::PARAM_INT)
+					->setParameter('id', (int)$row['id'], IQueryBuilder::PARAM_INT)
 					->setParameter('newSettings', $newSettings, IQueryBuilder::PARAM_STR)
 					->executeStatement();
 			}

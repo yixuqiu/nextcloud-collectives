@@ -2,177 +2,470 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Controller;
 
+use OCA\Collectives\Model\PageInfo;
+use OCA\Collectives\ResponseDefinitions;
 use OCA\Collectives\Service\AttachmentService;
+use OCA\Collectives\Service\CollectiveService;
+use OCA\Collectives\Service\NotFoundException;
 use OCA\Collectives\Service\PageService;
-use OCP\AppFramework\Controller;
+use OCA\Collectives\Service\SearchService;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\AppFramework\OCS\OCSBadRequestException;
+use OCP\AppFramework\OCS\OCSForbiddenException;
+use OCP\AppFramework\OCS\OCSNotFoundException;
+use OCP\AppFramework\OCSController;
+use OCP\Files\IRootFolder;
 use OCP\IRequest;
-use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
-class PageController extends Controller {
-	use ErrorHelper;
+/**
+ * Provides access to pages of a collective.
+ *
+ * @psalm-import-type CollectivesPageInfo from ResponseDefinitions
+ * @psalm-import-type CollectivesPageAttachment from ResponseDefinitions
+ */
+class PageController extends OCSController {
+	use OCSExceptionHelper;
+	use UserTrait;
 
-	public function __construct(string $appName,
+	public function __construct(
+		string $appName,
 		IRequest $request,
 		private PageService $service,
+		private IRootFolder $rootFolder,
 		private AttachmentService $attachmentService,
-		private IUserSession $userSession,
-		private LoggerInterface $logger) {
+		private SearchService $indexedSearchService,
+		private CollectiveService $collectiveService,
+		private LoggerInterface $logger,
+		private ?string $userId,
+	) {
 		parent::__construct($appName, $request);
 	}
 
-	private function getUserId(): string {
-		return $this->userSession->getUser()->getUID();
-	}
-
 	/**
-	 * @NoAdminRequired
+	 * Get pages of a collective
+	 *
+	 * @param int $collectiveId ID of the collective
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{pages: list<CollectivesPageInfo>}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective not found
+	 *
+	 * 200: Pages returned
 	 */
+	#[NoAdminRequired]
 	public function index(int $collectiveId): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId): array {
-			$userId = $this->getUserId();
-			$pageInfos = $this->service->findAll($collectiveId, $userId);
-			return [
-				"data" => $pageInfos
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfos = $this->handleErrorResponse(fn (): array => $this->service->findAll($collectiveId, $uid), $this->logger);
+		return new DataResponse(['pages' => $pageInfos]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Get one page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Page returned
 	 */
+	#[NoAdminRequired]
 	public function get(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->find($collectiveId, $id, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->find($collectiveId, $id, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Create a new page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $parentId ID of the parent page
+	 * @param string $title Title of the page
+	 * @param ?int $templateId ID of the template page to use
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or parent/template page not found
+	 *
+	 * 200: New page created
 	 */
-	public function create(int $collectiveId, int $parentId, string $title): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $parentId, $title): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->create($collectiveId, $parentId, $title, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+	#[NoAdminRequired]
+	public function create(int $collectiveId, int $parentId, string $title, ?int $templateId = null): DataResponse {
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->create($collectiveId, $parentId, $title, $templateId, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Touch a page (updates last edited user)
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or parent/template page not found
+	 *
+	 * 200: Page touched
 	 */
+	#[NoAdminRequired]
 	public function touch(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->touch($collectiveId, $id, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->touch($collectiveId, $id, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Move or copy a page inside the collective
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param ?int $parentId ID of target parent page (optional)
+	 * @param ?string $title Target title (optional)
+	 * @param ?int $index Index in subpage order (optional, default 0)
+	 * @param bool $copy Copy the page instead of move (optional, default false)
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or (parent) page not found
+	 *
+	 * 200: Page moved/copied
 	 */
+	#[NoAdminRequired]
 	public function moveOrCopy(int $collectiveId, int $id, ?int $parentId = null, ?string $title = null, ?int $index = 0, bool $copy = false): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id, $parentId, $title, $index, $copy): array {
-			$userId = $this->getUserId();
+		$index ??= 0;
+		$pageInfo = $this->handleErrorResponse(function () use ($collectiveId, $id, $parentId, $title, $index, $copy): PageInfo {
+			$uid = $this->getUid();
 			$pageInfo = $copy
-				? $this->service->copy($collectiveId, $id, $parentId, $title, $index, $userId)
-				: $this->service->move($collectiveId, $id, $parentId, $title, $index, $userId);
-			return [
-				"data" => $pageInfo
-			];
+				? $this->service->copy($collectiveId, $id, $parentId, $title, $index, $uid)
+				: $this->service->move($collectiveId, $id, $parentId, $title, $index, $uid);
+			return $pageInfo;
 		}, $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Move or copy a page to another collective
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $newCollectiveId ID of the target collective
+	 * @param ?int $parentId ID of target parent page (optional)
+	 * @param ?int $index Index in subpage order (optional, default 0)
+	 * @param bool $copy Copy the page instead of move (optional, default false)
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or (parent) page not found
+	 *
+	 * 200: Page moved/copied
 	 */
+	#[NoAdminRequired]
 	public function moveOrCopyToCollective(int $collectiveId, int $id, int $newCollectiveId, ?int $parentId = null, ?int $index = 0, bool $copy = false): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id, $newCollectiveId, $parentId, $index, $copy): array {
-			$userId = $this->getUserId();
+		$index ??= 0;
+		$this->handleErrorResponse(function () use ($collectiveId, $id, $newCollectiveId, $parentId, $index, $copy): void {
+			$uid = $this->getUid();
 			if ($copy) {
-				$this->service->copyToCollective($collectiveId, $id, $newCollectiveId, $parentId, $index, $userId);
+				$this->service->copyToCollective($collectiveId, $id, $newCollectiveId, $parentId, $index, $uid);
 			} else {
-				$this->service->moveToCollective($collectiveId, $id, $newCollectiveId, $parentId, $index, $userId);
-
+				$this->service->moveToCollective($collectiveId, $id, $newCollectiveId, $parentId, $index, $uid);
 			}
-			return [];
 		}, $this->logger);
+		return new DataResponse([]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set/unset emoji for a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param ?string $emoji Emoji to set or null to unset (optional, default null)
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Emoji set/unset
 	 */
+	#[NoAdminRequired]
 	public function setEmoji(int $collectiveId, int $id, ?string $emoji = null): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id, $emoji): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->setEmoji($collectiveId, $id, $emoji, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->setEmoji($collectiveId, $id, $emoji, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Set/unset full width view for a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param bool $fullWidth Whether to enable full width view for the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Full width view set/unset
 	 */
+	#[NoAdminRequired]
+	public function setFullWidth(int $collectiveId, int $id, bool $fullWidth): DataResponse {
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->setFullWidth($collectiveId, $id, $uid, $fullWidth), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
+	}
+
+	/**
+	 * Set subpage order for a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param ?string $subpageOrder JSON-stringified array of subpage IDs
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Subpage order set
+	 */
+	#[NoAdminRequired]
 	public function setSubpageOrder(int $collectiveId, int $id, ?string $subpageOrder = null): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id, $subpageOrder): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->setSubpageOrder($collectiveId, $id, $subpageOrder, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->setSubpageOrder($collectiveId, $id, $subpageOrder, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Add tag to a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $tagId ID of the tag to add
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Tag added
 	 */
+	#[NoAdminRequired]
+	public function addTag(int $collectiveId, int $id, int $tagId): DataResponse {
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->addTag($collectiveId, $id, $tagId, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
+	}
+
+	/**
+	 * Remove tag from a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $tagId ID of the tag to remove
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Tag removed
+	 */
+	#[NoAdminRequired]
+	public function removeTag(int $collectiveId, int $id, int $tagId): DataResponse {
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->removeTag($collectiveId, $id, $tagId, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
+	}
+
+	/**
+	 * Trash a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{page: CollectivesPageInfo}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Page trashed
+	 */
+	#[NoAdminRequired]
 	public function trash(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$pageInfo = $this->service->trash($collectiveId, $id, $userId);
-			return [
-				"data" => $pageInfo
-			];
-		}, $this->logger);
+		$uid = $this->getUid();
+		$pageInfo = $this->handleErrorResponse(fn (): PageInfo => $this->service->trash($collectiveId, $id, $uid), $this->logger);
+		return new DataResponse(['page' => $pageInfo]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Get attachments of a page
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{attachments: list<CollectivesPageAttachment>}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 *
+	 * 200: Attachments returned
 	 */
+	#[NoAdminRequired]
 	public function getAttachments(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$attachments = $this->attachmentService->getAttachments($collectiveId, $id, $userId);
-			return [
-				"data" => $attachments
-			];
+		$uid = $this->getUid();
+		$attachments = $this->handleErrorResponse(function () use ($collectiveId, $id, $uid): array {
+			$pageFile = $this->service->getPageFile($collectiveId, $id, $uid);
+			$userFolder = $this->rootFolder->getUserFolder($uid);
+			return $this->attachmentService->getAttachments($pageFile, $userFolder);
 		}, $this->logger);
+		return new DataResponse(['attachments' => $attachments]);
 	}
 
 	/**
-	 * @NoAdminRequired
+	 * Upload an attachment
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{attachment: CollectivesPageAttachment}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective or page not found
+	 * @throws OCSBadRequestException Invalid file upload
+	 *
+	 * 200: Attachment uploaded
 	 */
-	public function getBacklinks(int $collectiveId, int $id): DataResponse {
-		return $this->handleErrorResponse(function () use ($collectiveId, $id): array {
-			$userId = $this->getUserId();
-			$backlinks = $this->service->getBacklinks($collectiveId, $id, $userId);
-			return [
-				"data" => $backlinks
-			];
+	#[NoAdminRequired]
+	public function uploadAttachment(int $collectiveId, int $id): DataResponse {
+		$attachment = $this->handleErrorResponse(function () use ($collectiveId, $id) : array {
+			$this->service->verifyEditPermissions($collectiveId, $this->userId);
+			$pageFile = $this->service->getPageFile($collectiveId, $id, $this->userId);
+			$file = $this->request->getUploadedFile('file');
+			if ($file === null) {
+				throw new OCSBadRequestException('No file uploaded of file exceeds maximum size.');
+			}
+			if (isset($file['tmp_name'], $file['name'], $file['type'])) {
+				$resource = fopen($file['tmp_name'], 'rb');
+				if (!$resource) {
+					throw new OCSBadRequestException('Failed to open uploaded file.');
+				}
+				$name = $file['name'];
+				$userFolder = $this->rootFolder->getUserFolder($this->userId);
+				return $this->attachmentService->uploadAttachment($pageFile, $name, $resource, $userFolder);
+			}
+			throw new OCSBadRequestException('Invalid file upload.');
 		}, $this->logger);
+		return new DataResponse(['attachment' => $attachment]);
+	}
+
+	/**
+	 * Rename an attachment
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $attachmentId ID of the attachment
+	 * @param string $name Target name
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{attachment: CollectivesPageAttachment}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective, page or attachment not found
+	 *
+	 * 200: Attachment renamed
+	 */
+	#[NoAdminRequired]
+	public function renameAttachment(int $collectiveId, int $id, int $attachmentId, string $name): DataResponse {
+		$attachment = $this->handleErrorResponse(function () use ($collectiveId, $id, $attachmentId, $name): array {
+			$this->service->verifyEditPermissions($collectiveId, $this->userId);
+			$pageFile = $this->service->getPageFile($collectiveId, $id, $this->userId);
+			$userFolder = $this->rootFolder->getUserFolder($this->userId);
+			return $this->attachmentService->renameAttachment($pageFile, $attachmentId, $name, $userFolder);
+		}, $this->logger);
+		return new DataResponse(['attachment' => $attachment]);
+	}
+
+	/**
+	 * Delete an attachment
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $attachmentId ID of the attachment
+	 *
+	 * @return DataResponse<Http::STATUS_OK, list<empty>, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective, page or attachment not found
+	 *
+	 * 200: Attachment deleted
+	 */
+	#[NoAdminRequired]
+	public function deleteAttachment(int $collectiveId, int $id, int $attachmentId): DataResponse {
+		$this->handleErrorResponse(function () use ($collectiveId, $id, $attachmentId): void {
+			$this->service->verifyEditPermissions($collectiveId, $this->userId);
+			$pageFile = $this->service->getPageFile($collectiveId, $id, $this->userId);
+			$this->attachmentService->deleteAttachment($pageFile, $attachmentId);
+		}, $this->logger);
+		return new DataResponse([]);
+	}
+
+	/**
+	 * Restore an attachment
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param int $id ID of the page
+	 * @param int $attachmentId ID of the attachment
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{attachment: CollectivesPageAttachment}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective, page or attachment not found
+	 *
+	 * 200: Attachment restored
+	 */
+	#[NoAdminRequired]
+	public function restoreAttachment(int $collectiveId, int $id, int $attachmentId): DataResponse {
+		$attachment = $this->handleErrorResponse(function () use ($collectiveId, $id, $attachmentId): array {
+			$this->service->verifyEditPermissions($collectiveId, $this->userId);
+			$pageFile = $this->service->getPageFile($collectiveId, $id, $this->userId);
+			$userFolder = $this->rootFolder->getUserFolder($this->userId);
+			return $this->attachmentService->restoreAttachment($collectiveId, $pageFile, $attachmentId, $this->userId, $userFolder);
+		}, $this->logger);
+		return new DataResponse(['attachment' => $attachment]);
+	}
+
+	/**
+	 * Search the content of pages
+	 *
+	 * @param int $collectiveId ID of the collective
+	 * @param string $searchString String to search for
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{pages: list<CollectivesPageInfo>}, array{}>
+	 * @throws OCSForbiddenException Not Permitted
+	 * @throws OCSNotFoundException Collective not found
+	 *
+	 * 200: Found pages returned
+	 */
+	#[NoAdminRequired]
+	public function contentSearch(int $collectiveId, string $searchString): DataResponse {
+		$pageInfos = $this->handleErrorResponse(function () use ($collectiveId, $searchString): array {
+			$uid = $this->getUid();
+			$collective = $this->collectiveService->getCollective($collectiveId, $uid);
+			$results = $this->indexedSearchService->searchCollective($collective, $searchString);
+			$pages = [];
+			foreach ($results as $value) {
+				try {
+					$pages[] = $this->service->find($collectiveId, $value['file_id'], $uid);
+				} catch (NotFoundException) {
+					// Index may still contain pages that got removed since last indexing
+					continue;
+				}
+			}
+			return $pages;
+		}, $this->logger);
+		return new DataResponse(['pages' => $pageInfos]);
 	}
 }

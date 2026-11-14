@@ -2,31 +2,113 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2025 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Search\FileSearch;
 
+use Exception;
+use OCA\Collectives\Fs\NodeHelper;
+use OCA\Collectives\Search\FileSearch\Db\SearchDocMapper;
+use OCA\Collectives\Search\FileSearch\Db\SearchFileMapper;
+use OCA\Collectives\Search\FileSearch\Db\SearchWordMapper;
+use OCA\Collectives\Search\FileSearch\LanguageDetector\LanguageDetector;
+use OCA\Collectives\Search\FileSearch\Stemmer\Stemmer;
+use OCA\Collectives\Search\FileSearch\Tokenizer\WordTokenizer;
 use OCP\Files\File;
 use OCP\Files\Folder;
-use OCP\Files\InvalidPathException;
 use OCP\Files\NotFoundException;
-use OCP\Files\NotPermittedException;
-use OCP\Lock\LockedException;
-use PDO;
-use TeamTNT\TNTSearch\Contracts\EngineContract;
-use TeamTNT\TNTSearch\Indexer\TNTIndexer;
-use TeamTNT\TNTSearch\Support\Collection;
 
-/**
- * @property PDO|null $index
- */
-class FileIndexer extends TNTIndexer {
-	public function __construct(EngineContract $engine) {
-		parent::__construct($engine);
-		$this->disableOutput(true);
+class FileIndexer {
+	private const LANGUAGE_DETECTION_LIMIT = 2000;
+	private const STEM_MAX_DISTANCE = 3;
+
+	public function __construct(
+		private readonly SearchWordMapper $wordMapper,
+		private readonly SearchDocMapper $docMapper,
+		private readonly SearchFileMapper $fileMapper,
+		private readonly WordTokenizer $tokenizer,
+		private readonly Stemmer $stemmer,
+		private readonly LanguageDetector $languageDetector,
+	) {
 	}
 
-	public function loadConfig(array $config): void {
-		parent::loadConfig($config);
-		$this->engine->config['storage'] = '';
+	public function indexFolder(Folder $folder, int $collectiveId, bool $incremental = false): void {
+
+		if (!$incremental) {
+			$this->deleteIndexByCollective($collectiveId);
+		}
+
+		$files = $this->getDirectoryFiles($folder, true);
+
+		// Every collective has a landing page, so an empty listing indicates a
+		// lookup failure. Keep the existing index rather than wiping it.
+		if ($incremental && $files !== []) {
+			$this->deleteRemovedFilesFromIndex($collectiveId, $files);
+		}
+
+		foreach ($files as $file) {
+			$this->indexFile($file, $collectiveId, $incremental);
+		}
+	}
+
+	private function deleteIndexByCollective(int $collectiveId): void {
+		$this->wordMapper->deleteByCollective($collectiveId);
+		$this->docMapper->deleteByCollective($collectiveId);
+		$this->fileMapper->deleteByCollective($collectiveId);
+	}
+
+	private function indexFile(File $file, int $collectiveId, bool $incremental): void {
+
+		if ($incremental) {
+			$existingFile = $this->fileMapper->findByCollectiveAndFileId($collectiveId, $file->getId());
+
+			if ($existingFile && $existingFile->getMtime() >= $file->getMTime()) {
+				return;
+			}
+
+			if ($existingFile) {
+				$this->deleteFileFromIndex($collectiveId, $file->getId());
+			}
+		}
+
+		try {
+			$content = $file->getContent();
+		} catch (Exception) {
+			return;
+		}
+
+		$language = $this->languageDetector->detect(mb_substr($content, 0, self::LANGUAGE_DETECTION_LIMIT));
+		$tokens = $this->tokenizer->tokenize($content, $language);
+
+		$termCounts = [];
+		$termStems = [];
+		foreach ($tokens as $token) {
+			$term = mb_substr($token, 0, 50);
+			$termCounts[$term] = ($termCounts[$term] ?? 0) + 1;
+			$stem = $this->stemmer->stem($token, $language);
+			$isUsefulStem = $stem !== $term && levenshtein($token, $stem) <= self::STEM_MAX_DISTANCE;
+			$termStems[$term] = $isUsefulStem ? $stem : null;
+		}
+
+		unset($content, $tokens);
+
+		foreach ($termCounts as $term => $hitCount) {
+			try {
+				/** @psalm-suppress RedundantCast */
+				$word = $this->wordMapper->upsert($collectiveId, (string)$term, $termStems[$term], $hitCount, 1);
+				$this->docMapper->insertDoc($collectiveId, $word->getId(), $file->getId(), $hitCount);
+			} catch (Exception) {
+				continue;
+			}
+		}
+
+		try {
+			$this->fileMapper->insertFile($collectiveId, $file->getId(), $file->getInternalPath(), $file->getMTime(), $language);
+		} catch (Exception) {
+		}
 	}
 
 	private function getDirectoryFiles(Folder $folder, bool $recursive = false): array {
@@ -43,8 +125,12 @@ class FileIndexer extends TNTIndexer {
 				$filesRecursive[] = $this->getDirectoryFiles($node, true);
 			}
 
-			$extension = pathinfo($node->getName(), PATHINFO_EXTENSION);
-			if ($node instanceof File === false || !in_array($extension, ['md', 'txt'], true)) {
+			if (!$node instanceof File || !NodeHelper::isPage($node)) {
+				continue;
+			}
+
+			if (str_starts_with($node->getParent()->getName(), '.attachments.')
+				|| $node->getParent()->getName() === '.templates') {
 				continue;
 			}
 
@@ -54,55 +140,26 @@ class FileIndexer extends TNTIndexer {
 		return array_merge($files, ...$filesRecursive);
 	}
 
-	/**
-	 * @throws FileSearchException
-	 */
-	public function runOnDirectory(Folder $folder, bool $recursive = true): void {
-		$this->run($this->getDirectoryFiles($folder, $recursive));
+	private function deleteFileFromIndex(int $collectiveId, int $fileId): void {
+		$docs = $this->docMapper->findByCollectiveAndFileId($collectiveId, $fileId);
+
+		foreach ($docs as $doc) {
+			$this->wordMapper->decrementCounts($collectiveId, $doc->getWordId(), $doc->getHitCount());
+			$this->docMapper->delete($doc);
+		}
+
+		$this->fileMapper->deleteByCollectiveAndFileId($collectiveId, $fileId);
 	}
 
 	/**
-	 * @throws FileSearchException
+	 * @param File[] $files
 	 */
-	public function run(array $pages = []): void {
-		if (!$this->getIndex()) {
-			throw new FileSearchException('Indexing could not be performed because index is not selected.');
+	private function deleteRemovedFilesFromIndex(int $collectiveId, array $files): void {
+		$fileIds = array_map(static fn (File $file): int => $file->getId(), $files);
+		$indexedFileIds = $this->fileMapper->findFileIdsByCollective($collectiveId);
+
+		foreach (array_diff($indexedFileIds, $fileIds) as $fileId) {
+			$this->deleteFileFromIndex($collectiveId, $fileId);
 		}
-
-		$this->getIndex()->exec("CREATE TABLE IF NOT EXISTS filemap (
-                    id INTEGER PRIMARY KEY,
-                    path TEXT)");
-		$this->getIndex()->beginTransaction();
-
-		$processedPages = 0;
-		foreach ($pages as $page) {
-			try {
-				$id = $page->getId();
-				$internalPath = $page->getInternalPath();
-				$fileCollection = new Collection([
-					'id' => $id,
-					'name' => $page->getName(),
-					'content' => $page->getContent()
-				]);
-				$this->processDocument($fileCollection);
-
-				$statement = $this->getIndex()->prepare("INSERT INTO filemap ( 'id', 'path') values ( :id, :path)");
-				$statement->bindParam(':id', $id);
-				$statement->bindParam(':path', $internalPath);
-				$statement->execute();
-
-				$processedPages++;
-			} catch (NotFoundException|NotPermittedException|InvalidPathException|LockedException $e) {
-				throw new FileSearchException('File indexer failed to open and/or read file', 0, $e);
-			}
-		}
-		$this->getIndex()->exec("UPDATE info SET `value`=$processedPages WHERE `key`='total_documents'");
-		$this->getIndex()->exec("INSERT INTO info ( 'key', 'value') values ( 'driver', 'filesystem')");
-
-		$this->getIndex()->commit();
-	}
-
-	public function getIndex(): ?PDO {
-		return $this->engine->index;
 	}
 }

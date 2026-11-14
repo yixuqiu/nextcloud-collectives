@@ -1,19 +1,29 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<NcAppNavigationSettings :name="t('collectives', 'Collectives settings')">
-		<NcTextField name="userFolder"
-			:label="t('collectives', 'Collectives Folder')"
-			:label-visible="true"
-			:value="userFolderValue"
+	<NcAppNavigationSettings
+		:name="t('collectives', 'Collectives settings')"
+		excludeClickOutsideSelectors=".dialog__modal">
+		<NcTextField
+			name="userFolder"
+			:label="t('collectives', 'Collectives folder')"
+			labelVisible
+			:modelValue="userFolderValue"
 			:disabled="disabledPicker"
 			@click="selectCollectivesFolder" />
 	</NcAppNavigationSettings>
 </template>
 
 <script>
-import { mapActions, mapState } from 'vuex'
 import { getFilePickerBuilder, showError } from '@nextcloud/dialogs'
-import { NcAppNavigationSettings, NcTextField } from '@nextcloud/vue'
-import { UPDATE_COLLECTIVES_FOLDER } from '../../store/actions.js'
+import { t } from '@nextcloud/l10n'
+import { mapActions, mapState } from 'pinia'
+import NcAppNavigationSettings from '@nextcloud/vue/components/NcAppNavigationSettings'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
+import { useSettingsStore } from '../../stores/settings.js'
 import displayError from '../../util/displayError.js'
 
 export default {
@@ -23,6 +33,15 @@ export default {
 		NcTextField,
 	},
 
+	props: {
+		networkOnline: {
+			type: Boolean,
+			required: true,
+		},
+	},
+
+	emits: ['update:pickingFolder'],
+
 	data() {
 		return {
 			collectivesFolderLoading: false,
@@ -30,12 +49,12 @@ export default {
 	},
 
 	computed: {
-		...mapState({
-			collectivesFolder: (state) => state.settings.collectivesFolder,
-		}),
+		...mapState(useSettingsStore, ['collectivesFolder']),
+
 		disabledPicker() {
-			return this.collectivesFolderLoading || !this.collectivesFolder
+			return this.collectivesFolderLoading || !this.networkOnline || !this.collectivesFolder
 		},
+
 		userFolderValue() {
 			return this.disabledPicker
 				? t('collectives', 'Create a collective first')
@@ -44,34 +63,47 @@ export default {
 	},
 
 	methods: {
-		...mapActions({
-			dispatchUpdateCollectivesFolder: UPDATE_COLLECTIVES_FOLDER,
-		}),
+		t,
 
-		selectCollectivesFolder() {
-			const picker = getFilePickerBuilder(t('collectives', 'Select location for collectives'))
-				.setMultiSelect(false)
-				.setType(1)
-				.addMimeTypeFilter('httpd/unix-directory')
-				.allowDirectories()
-				.startAt(this.collectivesFolder)
-				.build()
-			picker.pick()
-				.then((path) => {
-					// No root folder, has to start with `/`, no subfolder
-					if (path === '/'
-						|| !path.startsWith('/')
-						|| path.includes('/', 1)) {
-						const error = t('collectives', 'Invalid path selected. Only folders on first level are supported.')
-						showError(error)
-						throw new Error(error)
-					}
+		...mapActions(useSettingsStore, ['updateCollectivesFolder']),
 
-					this.collectivesFolderLoading = true
-					this.dispatchUpdateCollectivesFolder(path)
-						.catch(displayError('Could not update collectives folder'))
+		async selectCollectivesFolder() {
+			this.$emit('update:pickingFolder', true)
+			try {
+				const picker = getFilePickerBuilder(t('collectives', 'Select location for collectives'))
+					.setMultiSelect(false)
+					.addButton({
+						label: t('collectives', 'Choose'),
+						variant: 'primary',
+						callback: () => {},
+					})
+					.addMimeTypeFilter('httpd/unix-directory')
+					.allowDirectories()
+					.startAt(this.collectivesFolder)
+					.build()
+				const path = await picker.pick()
+
+				// No root folder, has to start with `/`, not allowed to end with `/`
+				if (path === '/'
+					|| !path.startsWith('/')
+					|| path.endsWith('/')) {
+					const error = t('collectives', 'Invalid path selected. Only folders on first level are supported.')
+					showError(error)
+					throw new Error(error)
+				}
+
+				this.collectivesFolderLoading = true
+				try {
+					await this.updateCollectivesFolder(path)
+				} catch (e) {
+					console.error('Error updating collectives folder: ', e)
+					displayError('Could not update collectives folder')(e)
+				} finally {
 					this.collectivesFolderLoading = false
-				})
+				}
+			} finally {
+				this.$emit('update:pickingFolder', false)
+			}
 		},
 	},
 }

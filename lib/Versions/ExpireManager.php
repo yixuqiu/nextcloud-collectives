@@ -2,12 +2,18 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Versions;
 
 use OCA\Collectives\Service\MissingDependencyException;
 use OCA\Files_Versions\Expiration;
+use OCA\Files_Versions\Versions\IMetadataVersion;
 use OCA\Files_Versions\Versions\IVersion;
-use OCP\AppFramework\QueryException;
+use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 
 class ExpireManager {
@@ -32,50 +38,56 @@ class ExpireManager {
 	public function __construct(ContainerInterface $appContainer) {
 		try {
 			$this->expiration = $appContainer->get(Expiration::class);
-		} catch (QueryException $e) {
+		} catch (ContainerExceptionInterface $e) {
 			// Could not instantiate - probably files_versions app is disabled
 			$this->dependencyInjectionError = $e->getMessage();
 		}
 	}
 
 	/**
-	 * get list of files we want to archive
+	 * Get list of files we want to expire
+	 *
+	 * @param IVersion[] $versions
+	 * @return IVersion[]
 	 */
 	protected function getAutoExpireList(int $time, array $versions): array {
 		if (!$versions) {
 			return [];
 		}
+
 		$toDelete = []; // versions we want to delete
 
-		// ensure the versions are sorted by newest first
-		usort($versions, static fn (IVersion $a, IVersion $b) => $b->getTimestamp() <=> $a->getTimestamp());
+		// ensure the versions are sorted newest first
+		usort($versions, static fn (IVersion $a, IVersion $b): int => $b->getTimestamp() <=> $a->getTimestamp());
 
 		$interval = 1;
 		$step = self::MAX_VERSIONS_PER_INTERVAL[$interval]['step'];
-		if (self::MAX_VERSIONS_PER_INTERVAL[$interval]['intervalEndsAfter'] === -1) {
-			$nextInterval = -1;
-		} else {
-			$nextInterval = $time - self::MAX_VERSIONS_PER_INTERVAL[$interval]['intervalEndsAfter'];
-		}
+		$nextInterval = $time - self::MAX_VERSIONS_PER_INTERVAL[$interval]['intervalEndsAfter'];
 
+		/** @var IVersion $firstVersion */
 		$firstVersion = array_shift($versions);
 		$prevTimestamp = $firstVersion->getTimestamp();
 		$nextVersion = $firstVersion->getTimestamp() - $step;
 
 		foreach ($versions as $version) {
 			$newInterval = true;
-			while ($newInterval && $interval <= 5) {
+			while ($newInterval) {
 				if ($nextInterval === -1 || $prevTimestamp > $nextInterval) {
 					if ($version->getTimestamp() > $nextVersion) {
-						// distance between two versions is too small, mark to delete
-						$toDelete[] = $version;
+						// Do not expire versions with a label.
+						if (!($version instanceof IMetadataVersion) || $version->getMetadataValue('label') === null || $version->getMetadataValue('label') === '') {
+							//distance between two version too small, mark to delete
+							$toDelete[] = $version;
+						}
 					} else {
 						$nextVersion = $version->getTimestamp() - $step;
 						$prevTimestamp = $version->getTimestamp();
 					}
+
 					$newInterval = false; // version checked so we can move to the next one
 				} else { // time to move on to the next interval
 					$interval++;
+					/** @psalm-suppress InvalidArrayOffset We know that $interval is <= 6 thanks to the -1 intervalEndsAfter in the last step */
 					$step = self::MAX_VERSIONS_PER_INTERVAL[$interval]['step'];
 					$nextVersion = $prevTimestamp - $step;
 					if (self::MAX_VERSIONS_PER_INTERVAL[$interval]['intervalEndsAfter'] === -1) {
@@ -83,6 +95,7 @@ class ExpireManager {
 					} else {
 						$nextInterval = $time - self::MAX_VERSIONS_PER_INTERVAL[$interval]['intervalEndsAfter'];
 					}
+
 					$newInterval = true; // we changed the interval -> check same version with new interval
 				}
 			}
@@ -92,6 +105,8 @@ class ExpireManager {
 	}
 
 	/**
+	 * @param IVersion[] $versions
+	 * @return IVersion[]
 	 * @throws MissingDependencyException
 	 */
 	public function getExpiredVersion(array $versions, int $time, bool $quotaExceeded): array {
@@ -105,10 +120,22 @@ class ExpireManager {
 			$autoExpire = [];
 		}
 
-		$versionsLeft = array_udiff($versions, $autoExpire, static fn (IVersion $a, IVersion $b) => ($a->getRevisionId() <=> $b->getRevisionId()) *
-			($a->getSourceFile()->getId() <=> $b->getSourceFile()->getId()));
+		$versionsLeft = array_udiff($versions, $autoExpire, static fn (IVersion $a, IVersion $b): int => ($a->getRevisionId() <=> $b->getRevisionId())
+				* ($a->getSourceFile()->getId() <=> $b->getSourceFile()->getId()));
 
-		$expired = array_filter($versionsLeft, fn (IVersion $version) => $this->expiration->isExpired($version->getTimestamp(), $quotaExceeded));
+		$expired = array_filter($versionsLeft, function (IVersion $version) use ($quotaExceeded): bool {
+			// Do not expire current version.
+			if ($version->getTimestamp() === $version->getSourceFile()->getMtime()) {
+				return false;
+			}
+
+			// Do not expire versions with a label.
+			if ($version instanceof IMetadataVersion && $version->getMetadataValue('label') !== null && $version->getMetadataValue('label') !== '') {
+				return false;
+			}
+			/** @psalm-suppress PossiblyNullReference - we checked if $this->expiration is null above */
+			return $this->expiration->isExpired($version->getTimestamp(), $quotaExceeded);
+		});
 
 		return array_merge($autoExpire, $expired);
 	}

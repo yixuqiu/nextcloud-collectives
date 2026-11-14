@@ -1,46 +1,77 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<div>
-		<WidgetHeading v-if="isLandingPage"
-			:title="t('collectives', 'Landing page')"
-			class="text-container-heading" />
-		<SkeletonLoading v-show="!contentLoaded"
+	<div
+		ref="textContainer"
+		class="collectives-text-container"
+		:class="[isFullWidth ? 'full-width-view' : 'sheet-view']">
+		<SkeletonLoading
+			v-show="!contentLoaded"
 			type="text"
 			class="page-content-skeleton" />
-		<div v-show="contentLoaded && !showEditor"
-			ref="reader"
-			data-collectives-el="reader" />
-		<div v-if="currentCollectiveCanEdit"
+		<div
+			v-show="contentLoaded && !showEditor"
+			ref="readerEl"
+			data-collectives-el="reader"
+			data-cy-collectives="reader" />
+		<div
+			v-if="currentCollectiveCanEdit"
 			v-show="contentLoaded && showEditor"
-			ref="editor"
-			data-collectives-el="editor" />
+			ref="editorEl"
+			data-collectives-el="editor"
+			data-cy-collectives="editor" />
 	</div>
 </template>
 
 <script>
-import { subscribe, unsubscribe } from '@nextcloud/event-bus'
 import { showError } from '@nextcloud/dialogs'
-import WidgetHeading from './LandingPageWidgets/WidgetHeading.vue'
-import { mapActions, mapGetters, mapMutations } from 'vuex'
-import {
-	GET_VERSIONS,
-	TOUCH_PAGE,
-} from '../../store/actions.js'
-import editorMixin from '../../mixins/editorMixin.js'
-import pageContentMixin from '../../mixins/pageContentMixin.js'
+import { subscribe, unsubscribe } from '@nextcloud/event-bus'
+import { t } from '@nextcloud/l10n'
+import { useElementSize } from '@vueuse/core'
+import { mapActions, mapState } from 'pinia'
+import { ref, watch } from 'vue'
 import SkeletonLoading from '../SkeletonLoading.vue'
+import { useEditor } from '../../composables/useEditor.ts'
+import { useReader } from '../../composables/useReader.ts'
+import pageContentMixin from '../../mixins/pageContentMixin.js'
+import { useCirclesStore } from '../../stores/circles.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
+import { encodeAttachmentFilename } from '../../util/attachmentFilename.ts'
 
 export default {
 	name: 'TextEditor',
 
 	components: {
 		SkeletonLoading,
-		WidgetHeading,
 	},
 
 	mixins: [
-		editorMixin,
 		pageContentMixin,
 	],
+
+	props: {
+		isFullWidth: {
+			type: Boolean,
+			required: true,
+		},
+	},
+
+	setup() {
+		const textContainer = ref(null)
+		const { width } = useElementSize(textContainer)
+		watch(width, (value) => {
+			document.documentElement.style.setProperty('--text-container-width', value + 'px')
+		})
+		const davContent = ref('')
+		const { contentLoaded, editor, editorContent, editorEl, pageContent, setupEditor } = useEditor(davContent)
+		const { pageInfoBarPage, reader, readerEl, setupReader } = useReader(pageContent)
+		return { contentLoaded, davContent, editor, editorContent, editorEl, pageContent, pageInfoBarPage, reader, readerEl, setupEditor, setupReader, textContainer, width }
+	},
 
 	data() {
 		return {
@@ -49,17 +80,16 @@ export default {
 	},
 
 	computed: {
-		...mapGetters([
+		...mapState(useRootStore, ['isPublic', 'loading']),
+		...mapState(useCollectivesStore, [
 			'currentCollective',
 			'currentCollectiveCanEdit',
+		]),
+
+		...mapState(usePagesStore, [
 			'currentPage',
 			'currentPageDavUrl',
-			'hasVersionsLoaded',
-			'isLandingPage',
-			'isPublic',
-			'isTemplatePage',
 			'isTextEdit',
-			'loading',
 		]),
 
 		showEditor() {
@@ -68,57 +98,65 @@ export default {
 	},
 
 	watch: {
-		'currentPage.timestamp'() {
-			this.getPageContent()
+		'currentPage.timestamp': function(value) {
+			if (value) {
+				this.getPageContent()
+			}
 		},
 	},
 
 	beforeMount() {
-		// Change back to default view mode
-		this.setTextView()
+		// Change back to default preview mode
+		this.setTextPreview()
 
 		this.load('editor')
 		this.load('pageContent')
 	},
 
 	async mounted() {
-		const readerPromise = this.setupReader()
+		const readerPromise = this.setupReader(this.currentPage)
 		const editorPromise = this.setupEditor()
 		const pageContentPromise = this.getPageContent()
 		Promise.all([readerPromise, editorPromise, pageContentPromise]).then(() => {
 			this.initEditMode()
 		})
 
-		this.textEditWatcher = this.$watch('isTextEdit', (val) => {
+		this.textEditWatcher = this.$watch('isTextEdit', async (val) => {
 			if (val === false) {
 				this.stopEdit()
+			} else if (val === true) {
+				// Load full circle members for autocomplete when entering edit mode
+				const circlesStore = useCirclesStore()
+				if (!circlesStore.currentCircleMembersFullyLoaded && !this.isPublic) {
+					await this.getCircleMembers(this.currentCollective.circleId)
+				}
 			}
 		})
-		subscribe('collectives:attachment:restore', this.restoreAttachment)
+		subscribe('collectives:editor:save', this.onSaveRequest)
+		subscribe('collectives:attachment:insert', this.insertAttachment)
+		subscribe('collectives:attachment:replaceFilename', this.replaceAttachmentFilename)
+		subscribe('collectives:attachment:removeReferences', this.removeAttachmentReferences)
 	},
 
-	beforeDestroy() {
-		unsubscribe('collectives:attachment:restore', this.restoreAttachment)
+	beforeUnmount() {
+		unsubscribe('collectives:attachment:removeReferences', this.removeAttachmentReferences)
+		unsubscribe('collectives:attachment:replaceFilename', this.replaceAttachmentFilename)
+		unsubscribe('collectives:attachment:insert', this.insertAttachment)
+		unsubscribe('collectives:editor:save', this.onSaveRequest)
 		this.textEditWatcher()
 	},
 
 	methods: {
-		...mapMutations([
-			'load',
-			'done',
-			'setTextEdit',
-			'setTextView',
-		]),
+		t,
 
-		...mapActions({
-			dispatchTouchPage: TOUCH_PAGE,
-			dispatchGetVersions: GET_VERSIONS,
-		}),
+		...mapActions(useRootStore, ['load', 'done']),
+		...mapActions(usePagesStore, ['setTextEdit', 'setTextPreview', 'touchPage']),
+		...mapActions(useCirclesStore, ['getCircleMembers']),
 
-		restoreAttachment(name) {
+		insertAttachment({ name }) {
 			// inspired by the fixedEncodeURIComponent function suggested in
 			// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent
-			const src = '.attachments.' + this.currentPage.id + '/' + name
+			const src = '.attachments.' + this.currentPage.id + '/' + encodeAttachmentFilename(name)
 			// simply get rid of brackets to make sure link text is valid
 			// as it does not need to be unique and matching the real file name
 			const alt = name.replaceAll(/[[\]]/g, '')
@@ -126,11 +164,23 @@ export default {
 			this.editor.insertAtCursor(`<img src="${src}" alt="${alt}" />`)
 		},
 
+		replaceAttachmentFilename({ pageId, oldName, newName }) {
+			// Only available since editorApi 1.4
+			if (this.editor.replaceAttachmentFilename) {
+				this.editor.replaceAttachmentFilename(pageId, oldName, newName)
+			}
+		},
+
+		removeAttachmentReferences({ pageId, name }) {
+			// Only available since editorApi 1.4
+			if (this.editor.removeAttachmentReferences) {
+				this.editor.removeAttachmentReferences(pageId, name)
+			}
+		},
+
 		initEditMode() {
 			// Open in edit mode when pageMode is set
 			if (!!this.currentCollective.pageMode
-				// for template pages
-				|| this.isTemplatePage
 				// for new pages
 				|| this.loading('newPageContent')
 				// or when page is empty
@@ -140,7 +190,23 @@ export default {
 			}
 		},
 
-		stopEdit() {
+		// called from the parent component as well
+		focusEditor() {
+			this.editor?.focus()
+		},
+
+		onSaveRequest({ waitUntil }) {
+			if (this.isTextEdit && this.editor) {
+				waitUntil(this.saveEditor())
+			}
+		},
+
+		// called from the parent component as well
+		saveEditor() {
+			return this.editor.save()
+		},
+
+		async stopEdit() {
 			// switch back to edit if there's no content
 			if (!this.pageContent?.trim()) {
 				this.setTextEdit()
@@ -152,24 +218,21 @@ export default {
 
 			const changed = this.editorContent && (this.editorContent !== this.davContent)
 			if (changed) {
-				this.dispatchTouchPage()
-				if (!this.isPublic && this.hasVersionsLoaded) {
-					this.dispatchGetVersions(this.currentPage.id)
-				}
-
 				// Save pending changes in editor
 				// TODO: detect missing connection and display warning
-				this.save()
+				await this.saveEditor()
 					.catch(() => {
 						showError(t('collectives', 'Error saving the document. Please try again.'))
 						this.setTextEdit()
 					})
+
+				// Touch page to update last changed timestamp
+				this.touchPage()
 			}
 		},
 
 		async getPageContent() {
 			this.davContent = await this.fetchPageContent(this.currentPageDavUrl)
-			this.reader?.setContent(this.pageContent)
 			this.done('pageContent')
 		},
 	},
@@ -177,31 +240,29 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-.text-container-heading {
-	padding-left: 14px;
+.collectives-text-container {
+	display: flex;
+	flex-direction: column;
+	flex-grow: 1;
+
+	// Give editor some minimum scroll height on empty/short content
+	// Important on landing page when landing page widgets cover full height
+	min-height: 50vh;
+}
+
+[data-collectives-el="reader"], [data-collectives-el="editor"] {
+	display: flex;
+	flex-grow: 1;
 }
 
 .page-content-skeleton {
-	padding-top: 44px;
-}
-
-:deep([data-text-el='editor-container']) {
-	/* Remove scrolling mechanism from editor-container, required for menubar stickyness */
-	overflow: visible;
-
-	div.editor {
-		/* Adjust to page titlebar height */
-		div.text-menubar {
-			margin: auto;
-			top: 59px;
-		}
-	}
+	padding-block-start: var(--default-clickable-area);
 }
 
 @media print {
 	/* Don't print unwanted elements */
-	.text-container-heading {
-		display: none !important;
+	.collectives-text-container {
+		overflow: visible;
 	}
 }
 </style>

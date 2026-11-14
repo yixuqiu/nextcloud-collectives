@@ -1,0 +1,196 @@
+/**
+ * SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import type { CollectivePage } from '../support/fixtures/CollectivePage.ts'
+
+import { expect, mergeTests } from '@playwright/test'
+import { test as createCollectiveTest } from '../support/fixtures/create-collectives.ts'
+import { test as editorTest } from '../support/fixtures/editor.ts'
+import { randomString } from '../support/helpers/randomString.ts'
+
+const test = mergeTests(createCollectiveTest, editorTest)
+
+test.describe('Custom page picker - local search', () => {
+	let targetPage: CollectivePage
+
+	test.beforeEach(async ({ user, page, collective, editor }) => {
+		const sourcePage = await collective.createPage({ title: 'Source page', user, page })
+		targetPage = await collective.createPage({ title: 'Target page', user, page })
+		await sourcePage.open(true)
+
+		editor.setMode(true)
+		await editor.clickMenu('Insert link', 'Link to page')
+		// Wait for the modal enter transition, after which its focus trap gets activated
+		await expect(editor.pagePicker).toBeVisible()
+		await expect(page.locator('.modal-mask.fade-enter-active')).toHaveCount(0)
+	})
+
+	test('link to local page via search', async ({ page, editor }) => {
+		const targetPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Target page' })
+		// Should already be listed without searching
+		await expect(targetPageItem).toBeVisible()
+
+		await editor.pagePickerSearch.pressSequentially('Target page')
+
+		// Still listed with searching
+		await expect(targetPageItem).toBeVisible()
+
+		await targetPageItem.click()
+
+		const pageWidget = editor.getContent().locator('.widget-custom a.collective-page')
+		await expect(pageWidget).toBeVisible()
+		const origin = new URL(page.url()).origin
+		await expect(pageWidget).toHaveAttribute('href', origin + targetPage.getPageUrl())
+	})
+
+	test('link to local page has page title as link text', async ({ page, editor }) => {
+		const targetPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Target page' })
+		await targetPageItem.click()
+
+		const targetPagePreview = editor.getContent().locator('.preview').filter({ hasText: 'Target page' })
+		await targetPagePreview.getByLabel('Actions').click()
+		await page.getByRole('menuitemradio', { name: 'Text only' }).click()
+
+		await expect(editor.getContent().getByRole('link', { name: 'Target page', exact: true })).toBeVisible()
+	})
+
+	test('searching "landing page" lists landing pages', async ({ editor }) => {
+		await editor.pagePickerSearch.pressSequentially('landing page')
+
+		const landingPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Landing page' })
+		await expect(landingPageItem).toBeVisible()
+	})
+
+	test('searching collective title lists landing page', async ({ collective, editor }) => {
+		await editor.pagePickerSearch.pressSequentially(collective.data.name)
+
+		const landingPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Landing page' })
+		await expect(landingPageItem).toBeVisible()
+	})
+
+	test('select page with keyboard via Tab and Enter', async ({ page, editor }) => {
+		// Pages created within the same second have no stable order
+		const firstPageItem = editor.pagePicker.locator('.page-preview-item').first()
+		await expect(firstPageItem).toBeVisible()
+		// Initial focus can get lost while the modal opens
+		await editor.pagePickerSearch.focus()
+
+		// Search field -> filter menu -> first result
+		await page.keyboard.press('Tab')
+		await page.keyboard.press('Tab')
+		await expect(firstPageItem).toBeFocused()
+		await page.keyboard.press('Enter')
+
+		await expect(editor.getContent().locator('.widget-custom a.collective-page')).toBeVisible()
+	})
+
+	test('navigate results with arrow keys and select with Space', async ({ page, editor }) => {
+		const items = editor.pagePicker.locator('.page-preview-item')
+		await expect(items.first()).toBeVisible()
+		// Initial focus can get lost while the modal opens
+		await editor.pagePickerSearch.focus()
+
+		await page.keyboard.press('ArrowDown')
+		await expect(items.first()).toBeFocused()
+		await page.keyboard.press('ArrowDown')
+		await expect(items.nth(1)).toBeFocused()
+		await page.keyboard.press('ArrowUp')
+		await expect(items.first()).toBeFocused()
+		await page.keyboard.press('ArrowUp')
+		await expect(editor.pagePickerSearch).toBeFocused()
+
+		await page.keyboard.press('ArrowDown')
+		await page.keyboard.press(' ')
+		const pageWidget = editor.getContent().locator('.widget-custom a.collective-page')
+		await expect(pageWidget).toBeVisible()
+		await expect(pageWidget).not.toHaveAttribute('role')
+	})
+})
+
+test.describe('Custom page picker - cross-collective search', () => {
+	test.use({
+		// eslint-disable-next-line no-empty-pattern
+		collectiveConfigs: async ({}, use) => {
+			await use([
+				{ name: randomString() },
+				{ name: randomString() },
+			])
+		},
+	})
+
+	let otherTargetPage: CollectivePage
+
+	test.beforeEach(async ({ user, page, collectives, editor }) => {
+		const sourcePage = await collectives[0].createPage({ title: 'Source page', user, page })
+		otherTargetPage = await collectives[1].createPage({ title: 'Other collective page', user, page, content: 'content' })
+		await sourcePage.open(true)
+
+		editor.setMode(true)
+		await editor.clickMenu('Insert link', 'Link to page')
+		await page.waitForTimeout(200)
+
+		const filterMenu = editor.pagePicker.locator('.searchbar [aria-haspopup="menu"]')
+		await filterMenu.click()
+		await page.getByText('Limit to current collective').click()
+
+		// The menu stays open with focus on the checkbox. Close it, else typing
+		// a space into the search field may toggle the checkbox again.
+		await filterMenu.click()
+		await expect(page.getByText('Limit to current collective')).toBeHidden()
+	})
+
+	test('link to page from other collective', async ({ page, editor }) => {
+		// Should already be listed without searching
+		const otherPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Other collective page' })
+		await expect(otherPageItem).toBeVisible()
+
+		// Search for the page in the other collective
+		await editor.pagePickerSearch.pressSequentially('Other collective page')
+
+		// Still listed with searching
+		await expect(otherPageItem).toBeVisible()
+
+		await otherPageItem.click()
+
+		const pageWidget = editor.getContent().locator('.widget-custom a.collective-page')
+		await expect(pageWidget).toBeVisible()
+		const origin = new URL(page.url()).origin
+		await expect(pageWidget).toHaveAttribute('href', origin + otherTargetPage.getPageUrl())
+	})
+
+	test('searching "Landing page" lists landing page', async ({ editor }) => {
+		await editor.pagePickerSearch.fill('Landing page')
+		await expect(editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Source page' })).not.toBeVisible()
+
+		const landingPageItem = editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Landing page' })
+		await expect(landingPageItem).toHaveCount(2)
+	})
+
+	test('searching collective title lists landing page', async ({ collectives, editor }) => {
+		await editor.pagePickerSearch.fill(collectives[1].data.name)
+		await expect(editor.pagePicker.locator('.page-preview-item').filter({ hasText: 'Source page' })).not.toBeVisible()
+
+		const landingPageItem = editor.pagePicker.locator('.page-preview-item')
+			.filter({ hasText: 'Landing page' })
+			.filter({ hasText: collectives[1].data.name })
+		await expect(landingPageItem).toBeVisible()
+	})
+})
+
+test.describe('Smart picker - provider order witin Collectives', () => {
+	test.beforeEach(async ({ user, page, collective, editor }) => {
+		const sourcePage = await collective.createPage({ title: 'Source page', user, page })
+		await sourcePage.open(true)
+		editor.setMode(true)
+	})
+
+	test('lists Collective pages first with changed provider title', async ({ page, editor }) => {
+		await editor.getContent().press('/')
+
+		const options = page.locator('.suggestion-list__item')
+		await expect(options.first()).toContainText('Link to page in collective')
+		expect(await options.count()).toBeGreaterThan(1)
+	})
+})

@@ -1,48 +1,173 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<div class="text-menubar">
-		<div v-if="currentPage.lastUserId" class="infobar-item infobar-lastupdate">
+	<div class="infobar">
+		<component
+			:is="versionsLink ? 'a' : 'div'"
+			v-if="currentPage.lastUserId"
+			class="infobar-item infobar-lastupdate"
+			:title="versionsLinkTitle"
+			@click="versionsLink ? emitSidebar('versions') : undefined">
 			<div class="item-text">
-				<LastUserBubble :last-user-id="currentPage.lastUserId"
-					:last-user-display-name="currentPage.lastUserDisplayName"
+				<LastUserBubble
+					:lastUserId="currentPage.lastUserId"
+					:lastUserDisplayName="currentPage.lastUserDisplayName"
 					:timestamp="currentPage.timestamp"
-					:show-prefix-string="true" />
+					:showPrefixString="!isMobile" />
 			</div>
-		</div>
+		</component>
+		<template v-if="attachmentCount">
+			<div v-if="currentPage.lastUserId" class="infobar-seperator">
+				•
+			</div>
+			<a class="infobar-item" :title="attachmentsLinkTitle" @click="emitSidebar('attachments')">
+				<div class="item-icon">
+					<PaperclipIcon :size="18" />
+				</div>
+				<div class="item-text">
+					{{ attachmentCountString }}
+				</div>
+			</a>
+		</template>
+		<template v-if="backlinkCount">
+			<div v-if="currentPage.lastUserId || attachmentCount" class="infobar-seperator">
+				•
+			</div>
+			<a class="infobar-item" :title="backlinksLinkTitle" @click="emitSidebar('backlinks')">
+				<div class="item-icon">
+					<ArrowBottomLeftIcon :size="18" />
+				</div>
+				<div class="item-text">
+					{{ backlinkCountString }}
+				</div>
+			</a>
+		</template>
 	</div>
 </template>
 
 <script>
+import { emit } from '@nextcloud/event-bus'
+import { n, t } from '@nextcloud/l10n'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+import { mapState } from 'pinia'
+import ArrowBottomLeftIcon from 'vue-material-design-icons/ArrowBottomLeft.vue'
+import PaperclipIcon from 'vue-material-design-icons/Paperclip.vue'
 import LastUserBubble from '../LastUserBubble.vue'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'PageInfoBar',
 
 	components: {
+		ArrowBottomLeftIcon,
 		LastUserBubble,
+		PaperclipIcon,
 	},
 
 	props: {
 		currentPage: {
 			type: Object,
-			required: true,
+			default: () => ({
+				lastUserId: 0,
+				lastUserDisplayName: '',
+				timestamp: 0,
+			}),
+		},
+
+		canEdit: {
+			type: Boolean,
+			default: false,
+		},
+
+		attachmentCount: {
+			type: Number,
+			default: 0,
+		},
+
+		backlinkCount: {
+			type: Number,
+			default: 0,
+		},
+	},
+
+	setup() {
+		const isMobile = useIsMobile()
+		return { isMobile }
+	},
+
+	computed: {
+		...mapState(useRootStore, ['isPublic']),
+
+		versionsLink() {
+			return this.canEdit && !this.isPublic
+		},
+
+		versionsLinkTitle() {
+			return this.versionsLink
+				? t('collectives', 'Open version history')
+				: ''
+		},
+
+		attachmentsLinkTitle() {
+			return t('collectives', 'Open attachments')
+		},
+
+		backlinksLinkTitle() {
+			return t('collectives', 'Open backlinks')
+		},
+
+		attachmentCountString() {
+			return this.isMobile
+				? this.attachmentCount
+				: n('collectives', '%n attachment', '%n attachments', this.attachmentCount)
+		},
+
+		backlinkCountString() {
+			return this.isMobile
+				? this.backlinkCount
+				: n('collectives', '%n backlink', '%n backlinks', this.backlinkCount)
+		},
+	},
+
+	methods: {
+		t,
+		emitSidebar(tab) {
+			emit('collectives:page-sidebar', { open: true, tab })
 		},
 	},
 }
 </script>
 
-<style scoped lang="scss">
-.text-menubar {
+<style lang="scss">
+// Gets injected as custom web component
+page-info-bar {
+	// Copied from `.text-menubar` in text app
 	--background-blur: blur(10px);
 	position: sticky;
-	top: 59px;
-	z-index: 10021;
+	top: 0;
+	bottom: var(--default-grid-baseline);
+	width: var(--text-editor-max-width, var(--text-editor-max-width-default));
+	// Display above link previews and tables, but below dialogs and calendar event popover
+	z-index: 4;
 	background-color: var(--color-main-background-translucent);
 	backdrop-filter: var(--background-blur);
-	height: 44px;
-	padding: 3px 8px 3px 14px;
+	border-bottom: 1px solid var(--color-border);
+	padding-block: var(--default-grid-baseline);
+	margin-inline: calc((100% - var(--text-editor-max-width, var(--text-editor-max-width-default))) / 2);
+}
+</style>
+
+<style scoped lang="scss">
+.infobar {
+	height: var(--default-clickable-area);
+	width: 100%;
 	display: flex;
-	flex-wrap: nowrap;
+	padding-block: var(--default-grid-baseline);
 	align-items: center;
+
 	overflow: hidden;
 }
 
@@ -54,6 +179,10 @@ export default {
 	overflow: hidden;
 	white-space: nowrap;
 	opacity: .5;
+}
+
+.infobar-lastupdate {
+	padding-inline-start: 14px;
 }
 
 .infobar-seperator {

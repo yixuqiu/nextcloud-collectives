@@ -2,24 +2,32 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Model;
 
 use JsonSerializable;
-
 use OCP\Files\File;
 use OCP\Files\InvalidPathException;
 use OCP\Files\NotFoundException;
+use OCP\L10N\IFactory;
+use OCP\Server;
 
 class PageInfo implements JsonSerializable {
 	public const INDEX_PAGE_TITLE = 'Readme';
-	public const TEMPLATE_PAGE_TITLE = 'Template';
 	public const SUFFIX = '.md';
 
 	private int $id;
+	private ?string $slug = null;
 	private ?string $lastUserId = null;
 	private ?string $lastUserDisplayName = null;
 	private ?string $emoji = null;
 	private ?string $subpageOrder = null;
+	private bool $fullWidth = false;
+	private ?string $tags = null;
 	private ?int $trashTimestamp = null;
 	private string $title;
 	private int $timestamp;
@@ -29,6 +37,8 @@ class PageInfo implements JsonSerializable {
 	private ?string $collectivePath = null;
 	private int $parentId;
 	private ?string $shareToken = null;
+	private array $linkedPageIds = [];
+	private ?string $collectiveNameWithEmoji = null;
 
 	public function getId(): int {
 		return $this->id;
@@ -36,6 +46,14 @@ class PageInfo implements JsonSerializable {
 
 	public function setId(int $id): void {
 		$this->id = $id;
+	}
+
+	public function getSlug(): ?string {
+		return $this->slug;
+	}
+
+	public function setSlug(?string $slug): void {
+		$this->slug = $slug;
 	}
 
 	public function getLastUserId(): ?string {
@@ -68,6 +86,22 @@ class PageInfo implements JsonSerializable {
 
 	public function setSubpageOrder(string $subpageOrder): void {
 		$this->subpageOrder = $subpageOrder;
+	}
+
+	public function isFullWidth(): bool {
+		return $this->fullWidth;
+	}
+
+	public function setFullWidth(bool $fullWidth): void {
+		$this->fullWidth = $fullWidth;
+	}
+
+	public function getTags(): ?string {
+		return $this->tags;
+	}
+
+	public function setTags(string $tags): void {
+		$this->tags = $tags;
 	}
 
 	public function getTrashTimestamp(): ?int {
@@ -114,6 +148,14 @@ class PageInfo implements JsonSerializable {
 		return $this->filePath;
 	}
 
+	public function getFilePathString(): string {
+		$dirPath = dirname($this->getFilePath());
+		if (!$dirPath || $dirPath === DIRECTORY_SEPARATOR || $dirPath === '.') {
+			return '';
+		}
+		return str_replace(DIRECTORY_SEPARATOR, ' - ', $dirPath);
+	}
+
 	public function setFilePath(string $filePath): void {
 		$this->filePath = $filePath;
 	}
@@ -142,46 +184,166 @@ class PageInfo implements JsonSerializable {
 		$this->shareToken = $shareToken;
 	}
 
+	public function getLinkedPageIds(): array {
+		return $this->linkedPageIds;
+	}
+
+	public function setLinkedPageIds(array $linkedPageIds): void {
+		$this->linkedPageIds = $linkedPageIds;
+	}
+
+	public function getCollectiveNameWithEmoji(): ?string {
+		return $this->collectiveNameWithEmoji;
+	}
+
+	public function setCollectiveNameWithEmoji(string $collectiveNameWithEmoji): void {
+		$this->collectiveNameWithEmoji = $collectiveNameWithEmoji;
+	}
+
+	public function getUrlPath(): string {
+		return $this->slug ? $this->slug . '-' . $this->id : $this->title;
+	}
+
 	public function jsonSerialize(): array {
 		return [
 			'id' => $this->id,
+			'slug' => $this->slug,
 			'lastUserId' => $this->lastUserId,
 			'lastUserDisplayName' => $this->lastUserDisplayName,
 			'emoji' => $this->emoji,
 			'subpageOrder' => json_decode($this->subpageOrder ?? '[]', true, 512, JSON_THROW_ON_ERROR),
+			'isFullWidth' => $this->fullWidth,
+			'tags' => json_decode($this->tags ?? '[]', true, 512, JSON_THROW_ON_ERROR),
 			'trashTimestamp' => $this->trashTimestamp,
 			'title' => $this->title,
 			'timestamp' => $this->timestamp,
 			'size' => $this->size,
 			'fileName' => $this->fileName,
 			'filePath' => $this->filePath,
+			'filePathString' => $this->getFilePathString(),
 			'collectivePath' => $this->collectivePath,
+			'collectiveNameWithEmoji' => $this->collectiveNameWithEmoji,
 			'parentId' => $this->parentId,
 			'shareToken' => $this->shareToken,
+			'linkedPageIds' => $this->linkedPageIds,
 		];
+	}
+
+	/**
+	 * Build the page info from a lightweight filecache entry (see PageService::getPagesFromFolder).
+	 */
+	public function fromFileInfo(
+		CollectiveFileInfo $fileInfo,
+		int $parentId,
+		?string $collectivePath = null,
+		?string $lastUserId = null,
+		?string $lastUserDisplayName = null,
+		?string $emoji = null,
+		?string $subpageOrder = null,
+		?bool $fullWidth = false,
+		?string $slug = null,
+		?string $tags = null,
+		?array $linkedPageIds = null,
+	): void {
+		$dirName = dirname($fileInfo->path);
+		$dirName = $dirName === '.' ? '' : $dirName;
+		$this->fromData(
+			$fileInfo->fileId,
+			$dirName,
+			$fileInfo->isIndexPage(),
+			$parentId,
+			$fileInfo->name,
+			$fileInfo->mtime,
+			$fileInfo->size,
+			$collectivePath,
+			$lastUserId,
+			$lastUserDisplayName,
+			$emoji,
+			$subpageOrder,
+			$fullWidth,
+			$slug,
+			$tags,
+			$linkedPageIds,
+		);
 	}
 
 	/**
 	 * @throws InvalidPathException
 	 * @throws NotFoundException
 	 */
-	public function fromFile(File $file, int $parentId, ?string $lastUserId = null, ?string $lastUserDisplayName = null, ?string $emoji = null, ?string $subpageOrder = null): void {
-		$this->setId($file->getId());
-		// Set folder name as title for all index pages except the collective landing page
+	public function fromFile(
+		File $file,
+		int $parentId,
+		?string $lastUserId = null,
+		?string $lastUserDisplayName = null,
+		?string $emoji = null,
+		?string $subpageOrder = null,
+		?bool $fullWidth = false,
+		?string $slug = null,
+		?string $tags = null,
+		?array $linkedPageIds = null,
+	): void {
 		$dirName = dirname($file->getInternalPath());
 		$dirName = $dirName === '.' ? '' : $dirName;
-		if ($parentId !== 0 && strcmp($file->getName(), self::INDEX_PAGE_TITLE . self::SUFFIX) === 0) {
-			$this->setTitle(basename($dirName));
+		$isIndexPage = strcmp($file->getName(), self::INDEX_PAGE_TITLE . self::SUFFIX) === 0;
+		$mountPoint = explode('/', $file->getMountPoint()->getMountPoint(), 4);
+		$collectivePath = count($mountPoint) >= 4 ? rtrim($mountPoint[3], '/') : null;
+		$this->fromData(
+			$file->getId(),
+			$dirName,
+			$isIndexPage,
+			$parentId,
+			$file->getName(),
+			$file->getMTime(),
+			(int)$file->getSize(),
+			$collectivePath,
+			$lastUserId,
+			$lastUserDisplayName,
+			$emoji,
+			$subpageOrder,
+			$fullWidth,
+			$slug,
+			$tags,
+			$linkedPageIds,
+		);
+	}
+
+	private function fromData(
+		int $id,
+		string $dirName,
+		bool $isIndexPage,
+		int $parentId,
+		string $fileName,
+		int $timestamp,
+		int $size,
+		?string $collectivePath = null,
+		?string $lastUserId = null,
+		?string $lastUserDisplayName = null,
+		?string $emoji = null,
+		?string $subpageOrder = null,
+		?bool $fullWidth = false,
+		?string $slug = null,
+		?string $tags = null,
+		?array $linkedPageIds = null,
+	): void {
+		$this->setId($id);
+		if ($isIndexPage) {
+			if ($parentId === 0) {
+				// Landing page
+				$this->setTitle(Server::get(IFactory::class)->get('collectives')->t('Landing page'));
+			} else {
+				// Index page
+				$this->setTitle(basename($dirName));
+			}
 		} else {
-			$this->setTitle(basename($file->getName(), self::SUFFIX));
+			$this->setTitle(basename($fileName, self::SUFFIX));
 		}
 		$this->setFilePath($dirName);
-		$this->setTimestamp($file->getMTime());
-		$this->setSize($file->getSize());
-		$this->setFileName($file->getName());
-		$mountPoint = explode('/', $file->getMountPoint()->getMountPoint(), 4);
-		if (count($mountPoint) >= 4) {
-			$this->setCollectivePath(rtrim($mountPoint[3], '/'));
+		$this->setTimestamp($timestamp);
+		$this->setSize($size);
+		$this->setFileName($fileName);
+		if ($collectivePath !== null) {
+			$this->setCollectivePath($collectivePath);
 		}
 		if ($lastUserId !== null) {
 			$this->setLastUserId($lastUserId);
@@ -192,8 +354,20 @@ class PageInfo implements JsonSerializable {
 		if ($emoji !== null) {
 			$this->setEmoji($emoji);
 		}
+		if ($fullWidth !== null) {
+			$this->setFullWidth($fullWidth);
+		}
 		if ($subpageOrder !== null) {
 			$this->setSubpageOrder($subpageOrder);
+		}
+		if ($slug !== null) {
+			$this->setSlug($slug);
+		}
+		if ($tags !== null) {
+			$this->setTags($tags);
+		}
+		if ($linkedPageIds !== null) {
+			$this->setLinkedPageIds($linkedPageIds);
 		}
 		$this->setParentId($parentId);
 	}

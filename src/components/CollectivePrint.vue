@@ -1,10 +1,24 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div>
-		<input id="sharingToken"
+		<input
+			v-if="isPublic"
+			id="isPublic"
+			type="hidden"
+			name="isPublic"
+			value="1">
+		<input
+			v-if="isPublic"
+			id="sharingToken"
 			type="hidden"
 			name="sharingToken"
 			:value="shareTokenParam">
-		<NcEmptyContent v-show="loading"
+		<NcEmptyContent
+			v-show="loading"
 			:name="t('collectives', 'Preparing collective for exporting or printing')">
 			<template #icon>
 				<DownloadIcon />
@@ -14,7 +28,8 @@
 					{{ loadingProgress }}
 				</NcProgressBar>
 				<ul class="load-messages">
-					<li v-for="task in [loadPages, loadImages]"
+					<li
+						v-for="task in [loadPages, loadImages]"
 						v-show="task.total"
 						:key="task.message">
 						{{ task.message }}
@@ -24,7 +39,8 @@
 			</template>
 		</NcEmptyContent>
 		<div v-for="page in pagesTreeWalk()" v-show="!loading" :key="page.id">
-			<PagePrint :page="page"
+			<PagePrint
+				:page
 				@loading="waitingFor.push(page.id)"
 				@ready="ready(page.id)" />
 		</div>
@@ -32,13 +48,16 @@
 </template>
 
 <script>
-import { mapGetters, mapActions } from 'vuex'
-import { NcEmptyContent } from '@nextcloud/vue'
-import NcProgressBar from '@nextcloud/vue/dist/Components/NcProgressBar.js'
-import DownloadIcon from 'vue-material-design-icons/Download.vue'
+import { t } from '@nextcloud/l10n'
 import debounce from 'debounce'
+import { mapActions, mapState } from 'pinia'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcProgressBar from '@nextcloud/vue/components/NcProgressBar'
+import DownloadIcon from 'vue-material-design-icons/TrayArrowDown.vue'
 import PagePrint from './PagePrint.vue'
-import { GET_PAGES } from '../store/actions.js'
+import { useCollectivesStore } from '../stores/collectives.js'
+import { usePagesStore } from '../stores/pages.js'
+import { useRootStore } from '../stores/root.js'
 import displayError from '../util/displayError.js'
 
 export default {
@@ -60,6 +79,7 @@ export default {
 				count: 0,
 				total: 0,
 			},
+
 			loadImages: {
 				message: t('collectives', 'Loading images:'),
 				count: 0,
@@ -69,11 +89,9 @@ export default {
 	},
 
 	computed: {
-		...mapGetters([
-			'currentCollective',
-			'pagesTreeWalk',
-			'shareTokenParam',
-		]),
+		...mapState(useRootStore, ['isPublic', 'shareTokenParam']),
+		...mapState(useCollectivesStore, ['currentCollective']),
+		...mapState(usePagesStore, ['pagesTreeWalk']),
 
 		loadingCount() {
 			return this.loadPages.count + this.loadImages.count
@@ -100,23 +118,16 @@ export default {
 		},
 	},
 
-	mounted() {
-		this.getPages()
+	async mounted() {
+		await this.getPages()
+			.catch(displayError('Could not fetch pages'))
+		this.loadPages.total = this.pagesTreeWalk().length
 	},
 
 	methods: {
-		...mapActions({
-			dispatchGetPages: GET_PAGES,
-		}),
+		t,
 
-		/**
-		 * Get list of all pages
-		 */
-		async getPages() {
-			await this.dispatchGetPages()
-				.catch(displayError('Could not fetch pages'))
-			this.loadPages.total = this.pagesTreeWalk().length
-		},
+		...mapActions(usePagesStore, ['getPages']),
 
 		ready(pageId) {
 			if (this.waitingFor.indexOf(pageId) >= 0) {

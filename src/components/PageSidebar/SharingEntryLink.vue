@@ -1,116 +1,281 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<li class="sharing-entry sharing-entry__link">
-		<NcAvatar :is-no-user="true"
-			icon-class="avatar-link-share icon-public-white"
-			class="sharing-entry__avatar" />
-		<div class="sharing-entry__summary">
-			<div class="sharing-entry__desc">
-				<span class="sharing-entry__title" :title="title">
-					{{ title }}
-				</span>
-				<div v-if="share"
-					ref="quickShareDropdownContainer"
-					:class="{ 'active': showDropdown, 'share-select': true }">
-					<span :id="dropdownId"
-						class="trigger-text"
-						:aria-expanded="showDropdown"
-						:aria-haspopup="true"
-						aria-label="t('collectives', 'Quick share options dropdown')"
-						@click="toggleDropdown">
-						{{ selectedDropdownOption }}
-						<TriangleSmallDownIcon :size="15" />
+		<div class="sharing-entry__entry">
+			<NcAvatar
+				isNoUser
+				iconClass="avatar-link-share icon-public-white"
+				class="sharing-entry__avatar" />
+
+			<div class="sharing-entry__summary">
+				<div class="sharing-entry__desc">
+					<span class="sharing-entry__title" :title="title">
+						{{ title }}
 					</span>
-					<div v-if="showDropdown"
-						ref="quickShareDropdown"
-						class="share-select-dropdown"
-						:aria-labelledby="dropdownId"
-						tabindex="0"
-						@keydown.down="handleArrowDown"
-						@keydown.up="handleArrowUp"
-						@keydown.esc="closeDropdown">
-						<button v-for="option in dropdownOptions"
-							:key="option"
-							class="dropdown-item"
-							:class="{ 'selected': option === selectedDropdownOption }"
-							:aria-selected="option === selectedDropdownOption"
-							@click="selectOption(option)">
-							{{ option }}
-						</button>
+					<div
+						v-if="share"
+						ref="quickShareDropdownContainer"
+						class="share-select"
+						:class="{ active: showDropdown }">
+						<span
+							:id="dropdownId"
+							class="trigger-text"
+							:aria-expanded="showDropdown"
+							:aria-haspopup="true"
+							aria-label="t('collectives', 'Quick share options dropdown')"
+							@click="toggleDropdown">
+							{{ selectedDropdownOption }}
+							<TriangleSmallDownIcon :size="15" />
+						</span>
+						<div
+							v-if="showDropdown"
+							ref="quickShareDropdown"
+							class="share-select-dropdown"
+							:aria-labelledby="dropdownId"
+							:title="offlineTitle"
+							tabindex="0"
+							@keydown.down="handleArrowDown"
+							@keydown.up="handleArrowUp"
+							@keydown.esc="closeDropdown">
+							<button
+								v-for="option in dropdownOptions"
+								:key="option"
+								class="dropdown-item"
+								:class="{
+									'button--disabled': !networkOnline || isOptionDisabled(option),
+									selected: option === selectedDropdownOption,
+								}"
+								:disabled="isOptionDisabled(option)"
+								:aria-selected="option === selectedDropdownOption"
+								@click="selectOption(option)">
+								{{ option }}
+							</button>
+						</div>
 					</div>
 				</div>
+
+				<!-- clipboard -->
+				<NcActions v-if="share && share.token" class="sharing-entry__copy">
+					<NcActionButton
+						:aria-label="copyLinkTooltip"
+						@click.prevent="copyLink">
+						<template #icon>
+							<CheckIcon v-if="copySuccess" :size="20" />
+							<NcLoadingIcon v-else-if="copyLoading" :size="20" />
+							<ContentCopyIcon v-else :size="20" />
+						</template>
+						{{ copyLinkTooltip }}
+					</NcActionButton>
+				</NcActions>
 			</div>
 
-			<!-- clipboard -->
-			<NcActions v-if="share && share.token" ref="copyButton" class="sharing-entry__copy">
-				<NcActionButton :aria-label="copyLinkTooltip"
-					@click.prevent="copyLink">
+			<!-- pending actions -->
+			<NcActions
+				v-if="isPending"
+				v-model:open="open"
+				class="sharing-entry__pending_actions"
+				:aria-label="actionsTooltip"
+				menuAlign="right"
+				@close="onCancelPending">
+				<NcActionText>
 					<template #icon>
-						<CheckIcon v-if="copySuccess" :size="20" />
-						<NcLoadingIcon v-else-if="copyLoading" :size="20" />
-						<ContentCopyIcon v-else :size="20" />
+						<InformationIcon :size="20" />
 					</template>
-					{{ copyLinkTooltip }}
-				</NcActionButton>
-			</NcActions>
-		</div>
+					{{ t('collectives', 'Please enter the following required information before creating the share') }}
+				</NcActionText>
 
-		<!-- actions -->
-		<NcActions v-if="!loading"
-			class="sharing-entry__actions"
-			:aria-label="actionsTooltip"
-			menu-align="right"
-			:open.sync="open">
-			<template v-if="share">
-				<NcActionButton class="new-share-link" @click.prevent.stop="onNewShare">
+				<NcActionText v-if="isPasswordEnforced">
 					<template #icon>
-						<PlusIcon :size="20" />
+						<LockIcon :size="20" />
 					</template>
-					{{ t('collectives', 'Add another link') }}
+					{{ t('collectives', 'Password protection (enforced)') }}
+				</NcActionText>
+				<NcActionCheckbox
+					v-else-if="isPasswordDefaultEnabled"
+					v-model="isPendingPasswordProtected"
+					:disabled="loading"
+					@uncheck="onPendingDisablePassword">
+					{{ t('collectives', 'Set password') }}
+				</NcActionCheckbox>
+				<NcActionInput
+					v-if="isPendingPasswordProtected"
+					v-model="pendingPassword"
+					autocomplete="new-password"
+					:error="passwordError"
+					:helperText="errorPasswordLabel"
+					:required="isPasswordEnforced"
+					:minlength="passwordPolicy.minLength ?? 0"
+					:label="t('collectives', 'Password')"
+					:disabled="loading"
+					@submit="onNewShare" />
+				<NcActionButton @click.prevent.stop="onNewShare">
+					<template #icon>
+						<CheckIcon :size="20" />
+					</template>
+					{{ t('files_sharing', 'Create share') }}
 				</NcActionButton>
-
-				<NcActionButton class="unshare-button" @click.prevent="onDelete">
+				<NcActionButton @click.prevent.stop="onCancelPending">
 					<template #icon>
 						<CloseIcon :size="20" />
 					</template>
-					{{ t('collectives', 'Unshare') }}
+					{{ t('collectives', 'Cancel') }}
 				</NcActionButton>
-			</template>
+			</NcActions>
 
-			<!-- Create new share -->
-			<NcActionButton v-else
-				class="new-share-link"
-				:aria-label="t('collectives', 'Create a new share link')"
-				@click.prevent.stop="onNewShare">
-				<template #icon>
-					<PlusIcon :size="20" />
+			<!-- actions -->
+			<NcActions
+				v-else-if="!loading"
+				v-model:open="open"
+				class="sharing-entry__actions"
+				:aria-label="actionsTooltip"
+				menuAlign="right"
+				:disabled="!networkOnline"
+				:title="offlineTitle">
+				<template v-if="share">
+					<NcActionButton closeAfterClick @click.prevent.stop="toggleSettings">
+						<template #icon>
+							<TuneIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Customize link') }}
+					</NcActionButton>
+
+					<NcActionButton closeAfterClick @click.prevent="openQRCode">
+						<template #icon>
+							<QrcodeIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Generate QR code') }}
+					</NcActionButton>
+
+					<NcActionSeparator />
+
+					<NcActionButton class="new-share-link" @click.prevent.stop="onNewShare">
+						<template #icon>
+							<PlusIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Add another link') }}
+					</NcActionButton>
+
+					<NcActionButton class="unshare-button" @click.prevent="onDelete">
+						<template #icon>
+							<CloseIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Unshare') }}
+					</NcActionButton>
 				</template>
-				{{ t('collectives', 'Create a new share link') }}
-			</NcActionButton>
-		</NcActions>
 
-		<!-- loading indicator to replace the menu -->
-		<NcLoadingIcon v-else :size="20" class="sharing-entry__loading" />
+				<!-- Create new share -->
+				<NcActionButton
+					v-else
+					class="new-share-link"
+					:aria-label="t('collectives', 'Create a new share link')"
+					@click.prevent.stop="onNewShare">
+					<template #icon>
+						<PlusIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Create a new share link') }}
+				</NcActionButton>
+			</NcActions>
+
+			<!-- loading indicator to replace the menu -->
+			<NcLoadingIcon v-else :size="20" class="sharing-entry__loading" />
+		</div>
+
+		<div v-if="showSettings" class="sharing-entry__settings">
+			<NcTextField
+				v-model="label"
+				:label="t('collectives', 'Share label')"
+				:maxlength="255" />
+			<NcCheckboxRadioSwitch v-model="isPasswordProtected" :disabled="isPasswordEnforced">
+				{{ t('collectives', 'Set password') }}
+			</NcCheckboxRadioSwitch>
+			<NcPasswordField
+				v-if="isPasswordProtected"
+				autocomplete="new-password"
+				:modelValue="hasUnsavedPassword ? newPassword : ''"
+				:error="passwordError"
+				:helperText="errorPasswordLabel"
+				:required="isPasswordEnforced"
+				:minlength="passwordPolicy.minLength ?? 0"
+				:label="t('collectives', 'Password')"
+				@update:modelValue="onPasswordChange" />
+			<NcCheckboxRadioSwitch v-model="hasExpirationDate" :disabled="isExpireDateEnforced">
+				{{ isExpireDateEnforced
+					? t('collectives', 'Set expiration date (enforced)')
+					: t('collectives', 'Set expiration date') }}
+			</NcCheckboxRadioSwitch>
+			<NcDateTimePickerNative
+				v-if="hasExpirationDate"
+				type="date"
+				:modelValue="expirationDateObject"
+				:min="minExpirationDate"
+				:max="maxExpirationDate"
+				:label="t('collectives', 'Expiration date')"
+				@update:modelValue="onExpirationDateChange" />
+			<div class="button-group">
+				<NcButton :aria-label="t('collectives', 'Cancel')" @click="cancelSettings">
+					{{ t('collectives', 'Cancel') }}
+				</NcButton>
+				<NcButton variant="primary" :aria-label="t('collectives', 'Update share')" @click="saveSettings">
+					{{ t('collectives', 'Update share') }}
+				</NcButton>
+			</div>
+		</div>
+
+		<NcDialog
+			v-if="showQRCode"
+			v-model:open="showQRCode"
+			size="normal"
+			:name="title"
+			closeOnClickOutside>
+			<div class="qr-code-dialog">
+				<img :src="qrCode" :alt="t('collectives', 'QR code of the share link')" class="qr-code-dialog__img">
+			</div>
+		</NcDialog>
 	</li>
 </template>
 
 <script>
-import { mapActions, mapGetters } from 'vuex'
-import { generateUrl } from '@nextcloud/router'
+import axios from '@nextcloud/axios'
 import { showError, showSuccess } from '@nextcloud/dialogs'
+import { t } from '@nextcloud/l10n'
+import moment from '@nextcloud/moment'
+import { generateUrl } from '@nextcloud/router'
 import { createFocusTrap } from 'focus-trap'
-import { NcAvatar, NcActionButton, NcActions, NcLoadingIcon } from '@nextcloud/vue'
+import { mapActions, mapState } from 'pinia'
+import NcActionButton from '@nextcloud/vue/components/NcActionButton'
+import NcActionCheckbox from '@nextcloud/vue/components/NcActionCheckbox'
+import NcActionInput from '@nextcloud/vue/components/NcActionInput'
+import NcActions from '@nextcloud/vue/components/NcActions'
+import NcActionSeparator from '@nextcloud/vue/components/NcActionSeparator'
+import NcActionText from '@nextcloud/vue/components/NcActionText'
+import NcAvatar from '@nextcloud/vue/components/NcAvatar'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
+import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
+import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
+import NcPasswordField from '@nextcloud/vue/components/NcPasswordField'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
 import CheckIcon from 'vue-material-design-icons/Check.vue'
 import CloseIcon from 'vue-material-design-icons/Close.vue'
 import ContentCopyIcon from 'vue-material-design-icons/ContentCopy.vue'
+import InformationIcon from 'vue-material-design-icons/InformationOutline.vue'
+import LockIcon from 'vue-material-design-icons/LockOutline.vue'
 import PlusIcon from 'vue-material-design-icons/Plus.vue'
+import QrcodeIcon from 'vue-material-design-icons/Qrcode.vue'
 import TriangleSmallDownIcon from 'vue-material-design-icons/TriangleSmallDown.vue'
-
+import TuneIcon from 'vue-material-design-icons/Tune.vue'
+import { useNetworkState } from '../../composables/useNetworkState.ts'
 import CopyToClipboardMixin from '../../mixins/CopyToClipboardMixin.js'
-import {
-	CREATE_SHARE,
-	UPDATE_SHARE,
-	DELETE_SHARE,
-} from '../../store/actions.js'
+import serverCapabilities from '../../mixins/serverCapabilities.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useSharesStore } from '../../stores/shares.js'
+import { sharesCanBeEditable } from '../../util/sharePermissions.ts'
 
 export default {
 	name: 'SharingEntryLink',
@@ -119,16 +284,31 @@ export default {
 		CheckIcon,
 		CloseIcon,
 		ContentCopyIcon,
+		InformationIcon,
+		LockIcon,
 		NcActionButton,
+		NcActionCheckbox,
+		NcActionInput,
+		NcActionSeparator,
+		NcActionText,
 		NcActions,
-		NcLoadingIcon,
 		NcAvatar,
+		NcButton,
+		NcCheckboxRadioSwitch,
+		NcDateTimePickerNative,
+		NcDialog,
+		NcLoadingIcon,
+		NcPasswordField,
+		NcTextField,
 		PlusIcon,
+		QrcodeIcon,
 		TriangleSmallDownIcon,
+		TuneIcon,
 	},
 
 	mixins: [
 		CopyToClipboardMixin,
+		serverCapabilities,
 	],
 
 	props: {
@@ -136,32 +316,73 @@ export default {
 			type: Number,
 			default: null,
 		},
+
 		share: {
 			type: Object,
 			default: () => {},
 		},
 	},
 
+	setup() {
+		const { networkOnline } = useNetworkState()
+		return { networkOnline }
+	},
+
 	data() {
 		return {
 			showDropdown: false,
+			showSettings: false,
 			loading: false,
 			open: false,
 			focusTrap: null,
+			passwordError: false,
+			isPending: false,
+			isPendingPasswordProtected: true,
+			pendingPassword: '',
+			newPassword: null,
+			newExpirationDate: null,
+			newLabel: null,
+			showQRCode: false,
+			qrCode: '',
 		}
 	},
 
 	computed: {
-		...mapGetters([
-			'currentCollective',
-			'currentPage',
-			'isLandingPage',
-		]),
+		...mapState(useCollectivesStore, ['currentCollective', 'currentCollectivePath']),
+		...mapState(usePagesStore, ['currentPage', 'isLandingPage']),
 
 		title() {
+			if (!this.share) {
+				return t('collectives', 'Create public link')
+			}
+
+			const label = this.share.label?.trim()
+			if (label) {
+				// The title is rendered as text, so the label must not be HTML-escaped
+				return t('collectives', 'Share link ({label})', { label }, { escape: false })
+			}
+
 			return this.index > 1
 				? t('collectives', 'Share link ({index})', { index: this.index })
 				: t('collectives', 'Share link')
+		},
+
+		label: {
+			get() {
+				return this.newLabel === null
+					? (this.share.label ?? '')
+					: this.newLabel
+			},
+
+			set(label) {
+				this.newLabel = label
+			},
+		},
+
+		offlineTitle() {
+			return this.networkOnline
+				? ''
+				: t('collectives', 'You are offline')
 		},
 
 		dropdownId() {
@@ -197,7 +418,7 @@ export default {
 				}
 				return t('collectives', 'Cannot copy, please copy the link manually')
 			}
-			return t('collectives', 'Copy public link of {title} to clipboard', { title: this.title })
+			return t('collectives', 'Copy public link to clipboard')
 		},
 
 		isPageShare() {
@@ -205,13 +426,85 @@ export default {
 		},
 
 		shareUrl() {
-			return this.share
-				? window.location.origin + generateUrl(`/apps/collectives/p/${this.share.token}/${encodeURIComponent(this.currentCollective.name)}`)
-				: null
+			if (!this.share) {
+				return null
+			}
+
+			return this.isPageShare
+				? window.location.origin + generateUrl(`/apps/collectives/p/${this.share.token}${this.currentCollectivePath}/${this.currentPage.slug}-${this.currentPage.id}`)
+				: window.location.origin + generateUrl(`/apps/collectives/p/${this.share.token}${this.currentCollectivePath}`)
 		},
 
 		actionsTooltip() {
-			return t('collectives', 'Actions for "{title}"', { title: this.title })
+			return t('collectives', 'Share actions')
+		},
+
+		isPasswordEnforced() {
+			return window.OC.appConfig.core.enforcePasswordForPublicLink === true
+		},
+
+		isPasswordDefaultEnabled() {
+			return window.OC.appConfig.core.enableLinkPasswordByDefault === true
+		},
+
+		isPasswordProtected: {
+			get() {
+				return this.newPassword === null ? this.share.hasPassword : !!this.newPassword
+			},
+
+			async set(enabled) {
+				if (enabled) {
+					this.newPassword = await this.generatePassword()
+				} else {
+					this.newPassword = ''
+				}
+			},
+		},
+
+		hasUnsavedPassword() {
+			return this.newPassword !== null
+		},
+
+		errorPasswordLabel() {
+			return this.passwordError
+				? t('collectives', "Password field can't be empty")
+				: undefined
+		},
+
+		isExpireDateEnforced() {
+			return this.expireDatePolicy.enforced === true
+		},
+
+		expirationDate() {
+			return this.newExpirationDate === null
+				? (this.share.expirationDate ?? '')
+				: this.newExpirationDate
+		},
+
+		expirationDateObject() {
+			return moment(this.expirationDate, moment.HTML5_FMT.DATE, true).toDate()
+		},
+
+		hasExpirationDate: {
+			get() {
+				return !!this.expirationDate
+			},
+
+			set(enabled) {
+				this.newExpirationDate = enabled
+					? this.formatExpirationDate(moment().add(this.expireDatePolicy.default_days ?? 7, 'days'))
+					: ''
+			},
+		},
+
+		minExpirationDate() {
+			return moment().add(1, 'days').startOf('day').toDate()
+		},
+
+		maxExpirationDate() {
+			return this.isExpireDateEnforced
+				? moment().add(this.expireDatePolicy.days, 'days').startOf('day').toDate()
+				: null
 		},
 	},
 
@@ -219,17 +512,19 @@ export default {
 		window.addEventListener('click', this.handleClickOutside)
 	},
 
-	beforeDestroy() {
+	beforeUnmount() {
 		// Remove the global click event listener to prevent memory leaks
 		window.removeEventListener('click', this.handleClickOutside)
 	},
 
 	methods: {
-		...mapActions({
-			dispatchCreateShare: CREATE_SHARE,
-			dispatchDeleteShare: DELETE_SHARE,
-			dispatchUpdateShare: UPDATE_SHARE,
-		}),
+		t,
+
+		...mapActions(useSharesStore, [
+			'createShare',
+			'deleteShare',
+			'updateShare',
+		]),
 
 		handleClickOutside(event) {
 			const dropdownContainer = this.$refs.quickShareDropdownContainer
@@ -269,6 +564,10 @@ export default {
 			this.closeDropdown()
 		},
 
+		isOptionDisabled(option) {
+			return option === this.canEditText && !sharesCanBeEditable(this.currentCollective)
+		},
+
 		toggleDropdown() {
 			this.showDropdown = !this.showDropdown
 			if (this.showDropdown) {
@@ -306,32 +605,115 @@ export default {
 			await this.copyToClipboard(this.shareUrl)
 		},
 
+		toggleSettings() {
+			this.showSettings = !this.showSettings
+		},
+
+		async openQRCode() {
+			try {
+				// Loaded on demand to keep the library out of the main bundle
+				const { toDataURL } = await import('qrcode')
+				this.qrCode = await toDataURL(this.shareUrl)
+				this.showQRCode = true
+			} catch (error) {
+				console.error('Failed to generate QR code', error)
+				showError(t('collectives', 'Failed to generate QR code'))
+			}
+		},
+
 		async onNewShare() {
 			if (this.loading) {
+				return
+			}
+
+			if (!this.isPending && (this.isPasswordDefaultEnabled || this.isPasswordEnforced)) {
+				this.open = true
+				this.isPending = true
+				this.loading = true
+				this.pendingPassword = await this.generatePassword()
+				this.loading = false
 				return
 			}
 
 			try {
 				this.loading = true
 				this.open = false
-				await this.dispatchCreateShare({
+				await this.createShare({
 					collectiveId: this.currentCollective.id,
 					pageId: this.isPageShare ? this.currentPage.id : 0,
+					password: this.pendingPassword,
 				})
 				const message = this.isPageShare
 					? t('collectives', 'Page "{name}" has been shared', { name: this.currentPage.title })
 					: t('collectives', 'Collective "{name}" has been shared', { name: this.currentCollective.name })
 				showSuccess(message)
 			} catch (error) {
+				const responseError = error.response?.data?.ocs.meta.message
 				const message = this.isPageShare
-					? t('collectives', 'Failed to share page "{name}"', { name: this.currentPage.title })
-					: t('collectives', 'Failed to share collective "{name}"', { name: this.currentCollective.name })
+					? t('collectives', 'Failed to share page "{name}": {responseError}', {
+							name: this.currentPage.title,
+							responseError,
+						})
+					: t('collectives', 'Failed to share collective "{name}": {responseError}', {
+							name: this.currentCollective.name,
+							responseError,
+						})
 				showError(message)
-				console.error('Failed to create share', error)
+				console.error('Failed to create share', responseError ?? error)
 				this.open = true
 			} finally {
 				this.loading = false
+				this.isPending = false
+				this.pendingPassword = ''
 			}
+		},
+
+		onPendingDisablePassword() {
+			this.pendingPassword = ''
+		},
+
+		onCancelPending() {
+			this.isPending = false
+			this.pendingPassword = ''
+		},
+
+		async onPasswordChange(password) {
+			this.passwordError = !(password.trim())
+			this.newPassword = password || null
+		},
+
+		formatExpirationDate(date) {
+			// Force `en` locale, as .e.g. `ar` or `fa` would format non-latin digits
+			return moment(date).locale('en').format(moment.HTML5_FMT.DATE)
+		},
+
+		onExpirationDateChange(date) {
+			this.newExpirationDate = date ? this.formatExpirationDate(date) : ''
+		},
+
+		cancelSettings() {
+			this.newPassword = null
+			this.newExpirationDate = null
+			this.newLabel = null
+			this.showSettings = false
+		},
+
+		async saveSettings() {
+			const share = { ...this.share }
+			if (this.hasUnsavedPassword) {
+				share.password = this.newPassword
+			} else {
+				// Don't update share with empty password
+				delete share.password
+			}
+			share.expirationDate = this.expirationDate
+			share.label = this.label
+
+			await this.onUpdate(share)
+			this.newPassword = null
+			this.newExpirationDate = null
+			this.newLabel = null
+			this.showSettings = false
 		},
 
 		async onUpdate(share) {
@@ -342,13 +724,15 @@ export default {
 			try {
 				this.loading = true
 				this.open = false
-				await this.dispatchUpdateShare(share)
+				await this.updateShare(share)
 				const message = this.isPageShare
 					? t('collectives', 'Share link of page "{name}" has been updated', { name: this.currentPage.title })
 					: t('collectives', 'Share link of collective "{name}" has been updated', { name: this.currentCollective.name })
 				showSuccess(message)
 			} catch (error) {
 				console.error('Failed to update share link', error)
+				const responseError = error.response?.data?.ocs.meta.message
+				showError(t('collectives', 'Failed to update share link: {responseError}', { responseError }))
 				this.open = true
 			} finally {
 				this.loading = false
@@ -363,17 +747,46 @@ export default {
 			try {
 				this.loading = true
 				this.open = false
-				await this.dispatchDeleteShare(this.share)
+				await this.deleteShare(this.share)
 				const message = this.isPageShare
 					? t('collectives', 'Page "{name}" has been unshared', { name: this.currentPage.title })
 					: t('collectives', 'Collective "{name}" has been unshared', { name: this.currentCollective.name })
 				showSuccess(message)
 			} catch (error) {
 				console.error('Failed to unshare', error)
+				const responseError = error.response?.data?.ocs.meta.message
+				showError(t('collectives', 'Failed to unshare: {responseError}', { responseError }))
 				this.open = true
 			} finally {
 				this.loading = false
 			}
+		},
+
+		// Copied from `apps/files_sharing/src/utils/GeneratePassword.js`
+		async generatePassword() {
+			// note: some chars removed on purpose to make them human friendly when read out
+			const passwordSet = 'abcdefgijkmnopqrstwxyzABCDEFGHJKLMNPQRSTWXYZ23456789'
+
+			if (this.passwordPolicy.api?.generate) {
+				try {
+					const request = await axios.get(this.passwordPolicy.api.generate)
+					if (request.data.ocs.data.password) {
+						return request.data.ocs.data.password
+					}
+				} catch {
+					console.error('Error generating password from password_policy')
+					showError(t('collectives', 'Error generating password from password policy'))
+				}
+			}
+
+			const array = new Uint8Array(10)
+			const ratio = passwordSet.length / 255
+			self.crypto.getRandomValues(array)
+			let password = ''
+			for (let i = 0; i < array.length; i++) {
+				password += passwordSet.charAt(array[i] * ratio)
+			}
+			return password
 		},
 	},
 }
@@ -381,9 +794,13 @@ export default {
 
 <style scoped lang="scss">
 .sharing-entry {
-	display: flex;
-	align-items: center;
-	min-height: 44px;
+	&__entry {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		// 36px 2-line description + 2* 8px padding
+		min-height: 52px;
+	}
 
 	&__summary {
 		padding: 8px;
@@ -413,6 +830,32 @@ export default {
 
 	:deep(.avatar-link-share) {
 		background-color: var(--color-primary-element);
+	}
+
+	.button-group {
+		display: flex;
+		justify-content: space-between;
+		width: 100%;
+		margin-top: 16px;
+
+		button {
+			margin-left: 16px;
+
+			&:first-child {
+				margin-left: 0;
+			}
+		}
+	}
+}
+
+.qr-code-dialog {
+	display: flex;
+	width: 100%;
+	justify-content: center;
+
+	&__img {
+		width: 100%;
+		height: auto;
 	}
 }
 
@@ -459,6 +902,11 @@ export default {
 			width: 100%;
 			white-space: nowrap;
 			text-align: left;
+
+			&.button--disabled {
+				pointer-events: none;
+				opacity: .5;
+			}
 
 			&:hover {
 				background-color: var(--color-background-dark);

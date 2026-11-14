@@ -1,39 +1,55 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Service;
 
-use OC;
 use OC\App\AppManager;
-use OC\Files\Mount\MountPoint;
-use OC\Files\Node\File;
-use OC\Files\Node\Folder;
 use OCA\Circles\Model\Member;
 use OCA\Collectives\Db\Collective;
-use OCA\Collectives\Db\Page;
+use OCA\Collectives\Db\PageLinkMapper;
 use OCA\Collectives\Db\PageMapper;
+use OCA\Collectives\Db\TagMapper;
 use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Fs\UserFolderHelper;
+use OCA\Collectives\Model\CollectiveFileInfo;
 use OCA\Collectives\Model\PageInfo;
+use OCA\Collectives\Mount\CollectiveFolderManager;
 use OCA\Collectives\Service\CollectiveServiceBase;
+use OCA\Collectives\Service\NotFoundException;
+use OCA\Collectives\Service\NotificationService;
 use OCA\Collectives\Service\NotPermittedException;
+use OCA\Collectives\Service\PageInfoTreeBuilderFactory;
 use OCA\Collectives\Service\PageService;
-use OCP\IConfig;
+use OCA\Collectives\Service\SessionService;
+use OCP\Files\File;
+use OCP\Files\Folder;
+use OCP\Files\Mount\IMountPoint;
+use OCP\Files\NotFoundException as FilesNotFoundException;
 use OCP\IUserManager;
-use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use ReflectionClass;
+use Symfony\Component\String\Slugger\SluggerInterface;
+use Symfony\Component\String\UnicodeString;
+use Test\TestCase;
 
 class PageServiceTest extends TestCase {
 	private PageMapper $pageMapper;
 	private NodeHelper $nodeHelper;
 	private CollectiveServiceBase $collectiveService;
 	private Folder $collectiveFolder;
-	private IConfig $config;
+	private CollectiveFolderManager $collectiveFolderManager;
 	private PageService $service;
 	private string $userId = 'jane';
 	private int $collectiveId = 1;
 
 	protected function setUp(): void {
+		parent::setUp();
 		$appManager = $this->getMockBuilder(AppManager::class)
 			->disableOriginalConstructor()
 			->getMock();
@@ -71,13 +87,34 @@ class PageServiceTest extends TestCase {
 			->disableOriginalConstructor()
 			->getMock();
 
-		$this->config = $this->getMockBuilder(IConfig::class)
-			->disableOriginalConstructor()
-			->getMock();
-
 		$container = $this->getMockBuilder(ContainerInterface::class)
 			->disableOriginalConstructor()
 			->getMock();
+
+		$sessionService = $this->getMockBuilder(SessionService::class)
+			->disableOriginalConstructor()
+			->getMock();
+
+		$slug = new UnicodeString('free-123');
+		$slugger = $this->createMock(SluggerInterface::class);
+		$slugger->method('slug')->willReturn($slug);
+
+		$tagMapper = $this->createMock(TagMapper::class);
+
+		$pageLinkMapper = $this->createMock(PageLinkMapper::class);
+
+		$this->collectiveFolderManager = $this->createMock(CollectiveFolderManager::class);
+
+		$pageInfoTreeBuilderFactory = new PageInfoTreeBuilderFactory(
+			$this->pageMapper,
+			$pageLinkMapper,
+			$userManager,
+			$slugger,
+			$this->collectiveFolderManager,
+			$this->collectiveService,
+		);
+
+		$notificationService = $this->createMock(NotificationService::class);
 
 		$this->service = new PageService(
 			$appManager,
@@ -86,7 +123,14 @@ class PageServiceTest extends TestCase {
 			$this->collectiveService,
 			$userFolderHelper,
 			$userManager,
-			$this->config, $container);
+			$container,
+			$sessionService,
+			$slugger,
+			$tagMapper,
+			$pageLinkMapper,
+			$pageInfoTreeBuilderFactory,
+			$notificationService,
+		);
 	}
 
 	public function testGetPageFile(): void {
@@ -142,201 +186,247 @@ class PageServiceTest extends TestCase {
 		self::assertEquals($subFolder, $this->service->initSubFolder($otherFile));
 	}
 
-	public function testGetPagesFromFolder(): void {
-		$filesNotJustMd = [];
-		$filesJustMd = [];
-		$pageInfos = [];
+	public function testGetIndexPageFile(): void {
+		$indexFile = $this->createMock(File::class);
 
-		$folder = $this->getMockBuilder(Folder::class)
-			->disableOriginalConstructor()
-			->getMock();
-		$folder->method('getParent')
-			->willReturn($folder);
-		$folder->method('getName')
-			->willReturn('testfolder');
+		$folder = $this->createMock(Folder::class);
+		$folder->method('get')->willReturn($indexFile);
 
-		$mountPoint = $this->getMockBuilder(MountPoint::class)
-			->disableOriginalConstructor()
-			->getMock();
-		$mountPoint->method('getMountPoint')->willReturn('/files/user/Collectives/collective/');
+		self::assertEquals($indexFile, PageService::getIndexPageFile($folder));
+	}
 
-		$indexFile = $this->getMockBuilder(File::class)
-			->disableOriginalConstructor()
-			->getMock();
-		$indexFile->method('getId')
-			->willReturn(101);
-		$indexFile->method('getName')
-			->willReturn('Readme.md');
-		$folder->method('get')
-			->willReturn($indexFile);
-		$indexFile->method('getParent')
-			->willReturn($folder);
-		$indexFile->method('getMountPoint')
-			->willReturn($mountPoint);
-		$indexFile->method('getInternalPath')
-			->willReturn('Collectives/testfolder/Readme.md');
-		$indexFile->method('getMTime')
-			->willReturn(0);
-		$indexFile->method('getSize')
-			->willReturn(0);
-		$indexPage = new Page();
-		$this->pageMapper->method('findByFileId')
-			->willReturn($indexPage);
+	public function testGetIndexPageFileNoIndex(): void {
+		$folder = $this->createMock(Folder::class);
+		$folder->method('get')->willThrowException(new FilesNotFoundException());
+
+		$this->expectException(NotFoundException::class);
+		PageService::getIndexPageFile($folder);
+	}
+
+	public function testGetIndexPageFileBrokenIndex(): void {
+		$folder = $this->createMock(Folder::class);
+		$folder->method('get')->willReturn($folder);
+
+		$this->expectException(NotFoundException::class);
+		PageService::getIndexPageFile($folder);
+	}
+
+	private function fileInfo(int $fileId, int $parent, string $name, string $path): CollectiveFileInfo {
+		return new CollectiveFileInfo(
+			$fileId,
+			1,
+			$path,
+			$parent,
+			$name,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			'',
+			31,
+		);
+	}
+
+	private function buildExpectedPageInfo(CollectiveFileInfo $fileInfo, int $parentId, string $collectivePath): PageInfo {
+		$pageInfo = new PageInfo();
+		$pageInfo->fromFileInfo($fileInfo, $parentId, $collectivePath);
+		return $pageInfo;
+	}
+
+	public function testGetPagesFromFolderWithSubfolderWithoutRecurse(): void {
+		$collectivePath = '.Collectives/collective';
+
+		$mountPoint = $this->createMock(IMountPoint::class);
+		$mountPoint->method('getMountPoint')->willReturn('/files/user/.Collectives/collective/');
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(100);
+		$folder->method('getInternalPath')->willReturn('');
+		$folder->method('getMountPoint')->willReturn($mountPoint);
+
+		$index = $this->fileInfo(101, 100, 'Readme.md', 'Readme.md');
+		$page1 = $this->fileInfo(1, 100, 'page1.md', 'page1.md');
+		$page2 = $this->fileInfo(2, 100, 'page2.md', 'page2.md');
+		$subfolder = $this->fileInfo(102, 100, 'subfolder', 'subfolder');
+		$subfolderIndex = $this->fileInfo(103, 102, 'Readme.md', 'subfolder/Readme.md');
+
+		$this->collectiveFolderManager->method('getFileCacheForCollective')
+			->willReturn([$index, $page1, $page2, $subfolder, $subfolderIndex]);
+
+		// Without recursion only the subfolder's index page is added
+		$expected = [
+			$this->buildExpectedPageInfo($index, 0, $collectivePath),
+			$this->buildExpectedPageInfo($page1, 101, $collectivePath),
+			$this->buildExpectedPageInfo($page2, 101, $collectivePath),
+			$this->buildExpectedPageInfo($subfolderIndex, 101, $collectivePath),
+		];
+
+		self::assertEquals($expected, $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId));
+	}
+
+	public function testGetPagesFromFolderRecursive(): void {
+		$collectivePath = '.Collectives/collective';
+
+		$mountPoint = $this->createMock(IMountPoint::class);
+		$mountPoint->method('getMountPoint')->willReturn('/files/user/.Collectives/collective/');
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(100);
+		$folder->method('getInternalPath')->willReturn('');
+		$folder->method('getMountPoint')->willReturn($mountPoint);
+
+		$index = $this->fileInfo(101, 100, 'Readme.md', 'Readme.md');
+		$page1 = $this->fileInfo(1, 100, 'page1.md', 'page1.md');
+		$subfolder = $this->fileInfo(102, 100, 'subfolder', 'subfolder');
+		$subfolderIndex = $this->fileInfo(103, 102, 'Readme.md', 'subfolder/Readme.md');
+		$subPage = $this->fileInfo(3, 102, 'page3.md', 'subfolder/page3.md');
+
+		$this->collectiveFolderManager->method('getFileCacheForCollective')
+			->willReturn([$index, $page1, $subfolder, $subfolderIndex, $subPage]);
+
+		// With recursion the subfolder's pages are added below its index page
+		$expected = [
+			$this->buildExpectedPageInfo($index, 0, $collectivePath),
+			$this->buildExpectedPageInfo($page1, 101, $collectivePath),
+			$this->buildExpectedPageInfo($subfolderIndex, 101, $collectivePath),
+			$this->buildExpectedPageInfo($subPage, 103, $collectivePath),
+		];
+
+		self::assertEquals($expected, $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId, true));
+	}
+
+	public function testGetPagesFromFolderWithParentPageId(): void {
+		$collectivePath = '.Collectives/collective';
+
+		$mountPoint = $this->createMock(IMountPoint::class);
+		$mountPoint->method('getMountPoint')->willReturn('/files/user/.Collectives/collective/');
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(102);
+		$folder->method('getInternalPath')->willReturn('subfolder');
+		$folder->method('getMountPoint')->willReturn($mountPoint);
+
+		$subfolderIndex = $this->fileInfo(103, 102, 'Readme.md', 'subfolder/Readme.md');
+		$subPage = $this->fileInfo(3, 102, 'page3.md', 'subfolder/page3.md');
+
+		$this->collectiveFolderManager->method('getFileCacheForCollective')
+			->willReturn([$subfolderIndex, $subPage]);
+
+		$pageInfos = $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId, true, parentPageId: 101);
+		self::assertEquals([
+			$this->buildExpectedPageInfo($subfolderIndex, 101, $collectivePath),
+			$this->buildExpectedPageInfo($subPage, 103, $collectivePath),
+		], $pageInfos);
+		// A subfolder's index page is titled after its folder, not as landing page
+		self::assertSame('subfolder', $pageInfos[0]->getTitle());
+	}
+
+	public function testGetPagesFromFolderWithMissingIndex(): void {
+		$collectivePath = '.Collectives/collective';
+
+		$mountPoint = $this->createMock(IMountPoint::class);
+		$mountPoint->method('getMountPoint')->willReturn('/files/user/.Collectives/collective/');
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(100);
+		$folder->method('getInternalPath')->willReturn('');
+		$folder->method('getMountPoint')->willReturn($mountPoint);
+
+		$page1 = $this->fileInfo(1, 100, 'page1.md', 'page1.md');
+		$this->collectiveFolderManager->method('getFileCacheForCollective')
+			->willReturn([$page1]);
+
+		// No index page present, so a new one gets created for the entry folder
+		$folder->method('getFirstNodeById')->willReturn($folder);
+
+		$indexFile = $this->createMock(File::class);
+		$indexFile->method('getId')->willReturn(101);
+		$indexFile->method('getName')->willReturn('Readme.md');
+		$indexFile->method('getInternalPath')->willReturn('Readme.md');
+		$indexFile->method('getMountPoint')->willReturn($mountPoint);
+		$indexFile->method('getMTime')->willReturn(0);
+		$indexFile->method('getSize')->willReturn(0);
+		$folder->method('newFile')->willReturn($indexFile);
+
 		$indexPageInfo = new PageInfo();
-		$indexPageInfo->fromFile($indexFile, 1);
-		$indexPageInfo->setParentId(101);
-		$indexPageInfo->setTitle('testfolder');
+		$indexPageInfo->fromFile($indexFile, 0, $this->userId);
+		$indexPageInfo->setSlug('free-123');
+		$indexPageInfo->setParentId(0);
 
-		$filesJustMd[] = $indexPageInfo;
-		$filesNotJustMd[] = $indexPageInfo;
-		$pageInfos[] = $indexPageInfo;
+		$expected = [
+			$indexPageInfo,
+			$this->buildExpectedPageInfo($page1, 101, $collectivePath),
+		];
 
-		$fileNameList = [ 'page1.md', 'page2.md', 'page3.md', 'another.jpg', 'whatever.txt' ];
-		foreach ($fileNameList as $fileName) {
-			// Add all files to $filesNotJustMd
-			$file = $this->getMockBuilder(File::class)
-				->disableOriginalConstructor()
-				->getMock();
-			$file->method('getId')
-				->willReturn(1);
-			$file->method('getName')
-				->willReturn($fileName);
-			$file->method('getParent')
-				->willReturn($folder);
-			$file->method('getMountPoint')
-				->willReturn($mountPoint);
-			$file->method('getInternalPath')
-				->willReturn('Collectives/testfolder/Readme.md');
-			$file->method('getMTime')
-				->willReturn(0);
-			$file->method('getSize')
-				->willReturn(0);
-
-			$filesNotJustMd[] = $file;
-
-			// Only add markdown files to $filesJustMd
-			if (!NodeHelper::isPage($file)) {
-				continue;
-			}
-
-			$filesJustMd[] = $file;
-
-			$pageInfo = new PageInfo();
-			$pageInfo->fromFile($file, 1);
-			$pageInfo->setParentId(101);
-			$pageInfos[] = $pageInfo;
-		}
-
-		$folder->method('getDirectoryListing')
-			->willReturnOnConsecutiveCalls(
-				$filesJustMd,
-				$filesNotJustMd,
-			);
-
-		self::assertEquals($pageInfos, $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId, true));
-		self::assertEquals($pageInfos, $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId, true));
+		self::assertEquals($expected, $this->service->getPagesFromFolder($this->collectiveId, $folder, $this->userId, true));
 	}
 
 	public function testGetPageLink(): void {
-		$collectiveName = 'My Collective';
+		$collectiveUrlPath = 'My-Collective-2';
+
 		$pageInfo1 = new PageInfo();
 		$pageInfo1->setId(123);
+		$pageInfo1->setParentId(456);
+		$pageInfo1->setFilePath('page one');
+		$pageInfo1->setFileName('subpage2.md');
+		$pageInfo1->setTitle('subpage2');
+		$pageInfo1->setSlug('subpage2');
+
+		self::assertEquals('My-Collective-2/subpage2-123',
+			$this->service->getPageLink($collectiveUrlPath, $pageInfo1));
+
+		$pageInfo2 = new PageInfo();
+		$pageInfo2->setId(124);
+		$pageInfo2->setParentId(0);
+		$pageInfo2->setFilePath('');
+		$pageInfo2->setFileName('Readme.md');
+		$pageInfo2->setTitle('Landing page');
+		$pageInfo2->setSlug('');
+
+		self::assertEquals('My-Collective-2',
+			$this->service->getPageLink($collectiveUrlPath, $pageInfo2));
+	}
+
+	public function testGetPageLinkNoSlug(): void {
+		$collectiveUrlPath = 'My Collective';
+
+		$pageInfo1 = new PageInfo();
+		$pageInfo1->setId(123);
+		$pageInfo1->setParentId(456);
 		$pageInfo1->setFilePath('page one');
 		$pageInfo1->setFileName('subpage2.md');
 		$pageInfo1->setTitle('subpage2');
 
 		self::assertEquals('My%20Collective/page%20one/subpage2?fileId=123',
-			$this->service->getPageLink($collectiveName, $pageInfo1));
+			$this->service->getPageLink($collectiveUrlPath, $pageInfo1));
 
 		$pageInfo2 = new PageInfo();
 		$pageInfo2->setId(124);
-		$pageInfo2->setFilePath('page two/with another layer/and#spec!al_ch@rs?;');
+		$pageInfo2->setParentId(456);
+		$pageInfo2->setFilePath('page two/with another layer/and#spec!al_ch@rs?;/page');
 		$pageInfo2->setFileName('Readme.md');
 		$pageInfo2->setTitle('page');
 
 		self::assertEquals('My%20Collective/page%20two/with%20another%20layer/and%23spec%21al_ch%40rs%3F%3B/page?fileId=124',
-			$this->service->getPageLink($collectiveName, $pageInfo2));
-	}
+			$this->service->getPageLink($collectiveUrlPath, $pageInfo2));
 
-	public function testMatchBacklinks(): void {
-		$this->config->method('getSystemValue')
-			->willReturn(['nextcloud.local']);
+		$pageInfo3 = new PageInfo();
+		$pageInfo3->setId(125);
+		$pageInfo3->setParentId(0);
+		$pageInfo3->setFilePath('');
+		$pageInfo3->setFileName('Readme.md');
+		$pageInfo3->setTitle('Landing page');
 
-		$pageInfo = new PageInfo();
-		$pageInfo->setId(123);
-		$pageInfo->setCollectivePath('Collectives/mycollective');
-		$pageInfo->setFilePath('page1/pageX');
-		$pageInfo->setFileName('subpage2.md');
-		$pageInfo->setTitle('subpage2');
-
-		$urlPathBase = '/apps/collectives/mycollective';
-		$urlPath = $urlPathBase . '/page1/pageX/subpage2';
-
-		// Relative link with fileId in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](' . $urlPath . '?fileId=123).'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](/index.php' . $urlPath . '?fileId=123).'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong path but correct fileId](' . $urlPathBase . '/subpage2?fileId=123).'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a relative link](pageX/subpage2?fileId=123).'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong fileId](' . $urlPath . '?fileId=345).'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a broken link(' . $urlPath . '?fileId=123).'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a broken link] (' . $urlPath . '?fileId=123).'));
-
-		// Relative link with fileId in <link> syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with a link: <' . $urlPath . '?fileId=123>'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with a link: </index.php' . $urlPath . '?fileId=123>'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with a link to wrong path but correct fileId: <' . $urlPathBase . '/subpage2?fileId=123>'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with a relative link: <pageX/subpage2?fileId=123>.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a link to wrong fileId <' . $urlPath . '?fileId=345>.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a broken link: <' . $urlPath . '?fileId=123'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a broken link: <' . $urlPath . '?fileId=123]>'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a broken link: ' . $urlPath . '?fileId=123>'));
-
-		// Relative link without fileId in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](' . $urlPath . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong path](' . $urlPathBase . '/page1/subpage2) in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong webroot](/index.php/instance2' . $urlPath . ') in it.'));
-
-		// Relative link without fileId in <link> syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with a link: <' . $urlPath . '> in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a broken link: <[' . $urlPath . '> in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a link to wrong path: <' . $urlPathBase . '/page1/subpage2> in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with a link to wrong webroot: </index.php/instance2' . $urlPath . '> in it.'));
-
-		// Absolute link with fileId in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](http://nextcloud.local' . $urlPath . '?fileId=123) in it.'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](https://nextcloud.local' . $urlPath . '?fileId=123) in it.'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](https://nextcloud.local/index.php' . $urlPath . '?fileId=123) in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong host (with fileId)](https://example.org/' . $urlPath . 'fileId=123) in it.'));
-
-		// Absolute link without fileId in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](http://nextcloud.local' . $urlPath . ') in it.'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link](https://nextcloud.local' . $urlPath . ') in it.'));
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link with many slashes](https://nextcloud.local/////' . str_replace('/', '//', $urlPath) . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a broken link](https://nextcloud.local' . $urlPath . ' in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong instance](https://nextcloud.local/instance2' . $urlPath . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong host](https://anothercloud.com' . $urlPath . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link to wrong host](anothercloud.com' . $urlPath . ') in it.'));
-
-		OC::$WEBROOT = 'mycloud';
-
-		// Relative link with fileId with webroot in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link with webroot](' . OC::$WEBROOT . $urlPath . '?fileId=123).'));
-		// Relative link without fileId with webroot in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link with webroot](' . OC::$WEBROOT . $urlPath . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link with missing webroot](' . $urlPath . ') in it.'));
-		// Absolute link with fileId with webroot in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link with webroot](http://nextcloud.local' . OC::$WEBROOT . $urlPath . '?fileId=123) in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link with missing webroot](http://nextcloud.local' . $urlPath . '?fileId=123) in it.'));
-		// Absolute link without fileId with webroot in [text](link) syntax
-		self::assertTrue($this->service->matchBacklinks($pageInfo, 'content with [a link with webroot](http://nextcloud.local' . OC::$WEBROOT . $urlPath . ') in it.'));
-		self::assertFalse($this->service->matchBacklinks($pageInfo, 'content with [a link with missing webroot](http://nextcloud.local' . $urlPath . ') in it.'));
+		self::assertEquals('My%20Collective',
+			$this->service->getPageLink($collectiveUrlPath, $pageInfo3));
 	}
 
 	public function testIsAncestorOf(): void {
 		// Allow testing the private function
 		$reflection = new ReflectionClass($this->service);
 		$method = $reflection->getMethod('isAncestorOf');
-		$method->setAccessible(true);
 
 		$pageId = 1;
 		$targetId = 2;

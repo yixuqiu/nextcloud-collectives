@@ -1,37 +1,56 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="current-members">
-		<NcAppNavigationCaption v-if="isSearching"
+		<NcAppNavigationCaption
+			v-if="isSearching"
 			:name="t('collectives', 'Members')" />
-		<Member v-for="item in searchedMembers"
-			:key="item.singleId"
-			:circle-id="circleId"
-			:current-user-is-admin="currentUserIsAdmin"
-			:member-id="item.id"
-			:user-id="item.userId"
-			:display-name="item.displayName"
-			:user-type="circleMemberType(item)"
-			:level="item.level"
-			:is-current-user="isCurrentUser(item)"
-			:is-searched="false" />
-		<Hint v-if="isSearching && searchedMembers.length === 0"
+		<RecycleScroller
+			v-if="searchedMembers.length > 0"
+			class="scroller"
+			:items="searchedMembers"
+			:itemSize="56"
+			keyField="singleId">
+			<template #default="{ item }">
+				<MemberItem
+					:circleId
+					:currentUserIsAdmin
+					:memberId="item.id"
+					:userId="item.userId"
+					:displayName="item.displayName"
+					:userType="circleMemberType(item)"
+					:level="item.level"
+					:isCurrentUser="isCurrentUser(item)" />
+			</template>
+		</RecycleScroller>
+		<MembersHint
+			v-if="isSearching && searchedMembers.length === 0"
 			:hint="t('collectives', 'No search results')" />
 	</div>
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
 import { getCurrentUser } from '@nextcloud/auth'
-import { NcAppNavigationCaption } from '@nextcloud/vue'
-import Hint from './Hint.vue'
-import Member from './Member.vue'
+import { t } from '@nextcloud/l10n'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import NcAppNavigationCaption from '@nextcloud/vue/components/NcAppNavigationCaption'
+import MemberItem from './MemberItem.vue'
+import MembersHint from './MembersHint.vue'
+import { circleMemberType } from '../../util/circles.ts'
+
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
 export default {
 	name: 'CurrentMembers',
 
 	components: {
-		Hint,
-		Member,
+		MembersHint,
+		MemberItem,
 		NcAppNavigationCaption,
+		RecycleScroller,
 	},
 
 	props: {
@@ -39,33 +58,31 @@ export default {
 			type: String,
 			required: true,
 		},
+
 		currentMembers: {
 			type: Array,
 			required: true,
 		},
+
 		searchQuery: {
 			type: String,
 			default: '',
 		},
+
 		currentUserIsAdmin: {
 			type: Boolean,
-			default: true,
+			required: true,
 		},
 	},
 
 	computed: {
-		...mapGetters([
-			'circleMemberType',
-		]),
-
 		isSearching() {
 			return this.searchQuery !== ''
 		},
 
 		sortedMembers() {
 			return this.currentMembers
-				.slice()
-				.sort(this.sortCurrentUserFirst)
+				.toSorted(this.sortCurrentUserFirst)
 		},
 
 		searchedMembers() {
@@ -74,7 +91,7 @@ export default {
 			}
 
 			return this.sortedMembers
-				.filter(m => m.displayName.toLowerCase().includes(this.searchQuery.toLowerCase()))
+				.filter((m) => m.displayName.toLowerCase().includes(this.searchQuery.toLowerCase()))
 		},
 
 		currentUser() {
@@ -82,7 +99,7 @@ export default {
 		},
 
 		isCurrentUser() {
-			return function(item) {
+			return (item) => {
 				return item.userId === this.currentUser
 					|| item.singleId === item.circle.initiator.singleId
 			}
@@ -90,6 +107,10 @@ export default {
 	},
 
 	methods: {
+		t,
+
+		circleMemberType,
+
 		/**
 		 * @param {object} m1 First member
 		 * @param {string} m1.userId First member user ID
@@ -107,3 +128,11 @@ export default {
 	},
 }
 </script>
+
+<style scoped lang="scss">
+.current-members {
+	.scroller {
+		max-height: 370px;
+	}
+}
+</style>

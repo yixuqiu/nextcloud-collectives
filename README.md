@@ -1,50 +1,52 @@
-# Collectives
+<!--
+  - SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 
-Collectives is a Nextcloud App for activist and community projects to
-organize together. Come and gather in collectives to build shared knowledge.
+# ⭐ Collectives
 
-* 👥 **Collective and non-hierarchical workflow by heart**: Collectives are
-  tied to a [Nextcloud Team](https://github.com/nextcloud/circles) and
-  owned by the collective.
-* 📝 **Collaborative page editing** like known from Etherpad thanks to the
-  [Text app](https://github.com/nextcloud/text).
-* 🔤 **Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax**
-  for page formatting.
-* 🔎 Full-text search with automatic indexing to find content straight away.
+[![REUSE status](https://api.reuse.software/badge/github.com/nextcloud/collectives)](https://api.reuse.software/info/github.com/nextcloud/collectives)
 
-![Screenshot of Nextcloud Collectives Version 0.2.1](https://raw.githubusercontent.com/nextcloud/collectives/main/docs/static/images/screenshot.png)
+Your space to collaboratively write and organize. Collectives is designed for groups and communities
+to structure shared knowledge and cultivate trust.
 
-## Installation
+![Screenshot of Nextcloud Collectives](https://raw.githubusercontent.com/nextcloud/collectives/main/docs/assets/desktop-screenshot.png)
 
-In your Nextcloud instance, simply navigate to **»Apps«**, find the
-**»Teams«** and **»Collectives«** apps and enable them.
+## Why use Collectives?
 
-## Requirements
+* **👥 Non-hierarchical at its core**: Each collective is backed by a
+  [Nextcloud Team](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/contacts.html#teams) - its
+  content is owned by the group, not a single user.
+* **📝 Collaborative page editing** thanks to the [Text app](https://github.com/nextcloud/text).
+* **🔤 Well-known [Markdown](https://en.wikipedia.org/wiki/Markdown) syntax** for page formatting.
+* **🔎 Full-text search** to find content straight away.
 
-For full-text search to work the sqlite and pdo PHP extensions must be installed.
+## 📚 Documentation
 
-## Documentation and help
+* **[📙 Documentation for users and user groups](https://docs.nextcloud.com/server/latest/user_manual/en/collectives/index.html)**
+* **[📗 Documentation for administrators](https://docs.nextcloud.com/server/latest/admin_manual/collectives/index.html)**
+* **[📘 Documentation for developers](DEVELOPING.md)**
+* **[⚙️ OCS API](openapi.json)** - best viewed with the [OCS API Viewer app](https://apps.nextcloud.com/apps/ocs_api_viewer)
 
-Take a look at our [online documentation](https://nextcloud.github.io/collectives/).
+## 💬 Contact
 
-Also, don't hesitate to ask [the community](https://help.nextcloud.com/c/apps/collectives/174)
-for help in case of questions.
+In case of questions or feedback, you can join [the community](https://help.nextcloud.com/tag/collectives-app).
 
-## Developer documentation
+We're also available at [our public Collectives conversation](https://cloud.nextcloud.com/call/2618694936) if you
+want to join the discussion.
 
-Documentation for developers can be found at [DEVELOPING.md](DEVELOPING.md).
+## 🚧 Development setup
 
-## Translations
+See [DEVELOPING.md](DEVELOPING.md) to set up a development environment and learn how to contribute.
 
-Collectives translations are managed as part of the [Nextcloud project on Transifex](https://www.transifex.com/nextcloud/nextcloud/).
+## 📦 Installation
 
-## Maintainers
+Install directly from the [Nextcloud App Store](https://apps.nextcloud.com/apps/collectives).
 
-* Azul and Jonas <collectivecloud@systemli.org>
+## 🔣 Translations
 
-## Licence
+Collectives translations are managed as part of the [Nextcloud project on Transifex](https://explore.transifex.com/nextcloud/nextcloud/).
 
-AGPL v3 or later. See [COPYING](COPYING) for the full licence text.
+## ©️ License
 
-The app logo and page icons were designed and contributed by Jörg Schmidt
-from Institut für Gebrauchsgrafik <info@institut.gebrauchsgrafik.org>.
+AGPL v3 or later. See [COPYING](COPYING) for the full license text.

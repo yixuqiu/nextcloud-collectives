@@ -1,145 +1,198 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div>
-		<NcActions :force-menu="true" @click.native.stop>
-			<!-- Collective actions: only displayed for landing page in page list -->
-			<CollectiveActions v-if="displayCollectiveActions"
-				:collective="currentCollective" />
-			<NcActionButton v-if="displayCollectiveActions && collectiveExtraAction"
-				:close-after-click="true"
-				@click="collectiveExtraAction.click()">
-				{{ collectiveExtraAction.title }}
-				<template #icon>
-					<OpenInNewIcon :size="20" />
+		<NcActions
+			forceMenu
+			@click.stop>
+			<!-- Collective actions: only displayed for landing page -->
+			<template v-if="isLandingPage">
+				<NcActionCollectiveActions
+					v-model:submenu="collectiveSubmenu"
+					:collective="currentCollective"
+					:networkOnline />
+				<NcActionSeparator v-if="!collectiveSubmenu" />
+			</template>
+
+			<template v-if="!collectiveSubmenu">
+				<!-- Last edited info -->
+				<NcActionLastUser
+					v-if="displayLastEditedInfo"
+					:lastUserId
+					:lastUserDisplayName
+					:timestamp />
+				<NcActionSeparator v-if="displayLastEditedInfo" />
+
+				<!-- Sidebar toggle: only displayed on mobile and in page title menu -->
+				<template v-if="displaySidebarAction">
+					<NcActionButton
+						:aria-label="t('collectives', 'Open page sidebar')"
+						aria-controls="app-sidebar-vue"
+						closeAfterClick
+						@click="toggleSidebar()">
+						<template #icon>
+							<DockRightIcon :size="20" />
+						</template>
+						{{ t('collectives', 'Open page sidebar') }}
+					</NcActionButton>
+					<NcActionSeparator />
 				</template>
-			</NcActionButton>
-			<NcActionSeparator v-if="displayCollectiveActions" />
 
-			<!-- Last edited info -->
-			<PageActionLastUser v-if="displayLastEditedInfo"
-				:last-user-id="lastUserId"
-				:last-user-display-name="lastUserDisplayName"
-				:timestamp="timestamp" />
-			<NcActionSeparator v-if="displayLastEditedInfo" />
-
-			<!-- Sidebar toggle: only displayed on mobile and in page title menu -->
-			<NcActionButton v-if="displaySidebarAction"
-				icon="icon-menu-sidebar"
-				:aria-label="t('collectives', 'Open page sidebar')"
-				aria-controls="app-sidebar-vue"
-				:close-after-click="true"
-				@click="toggle('sidebar')">
-				{{ t('collectives', 'Open page sidebar') }}
-			</NcActionButton>
-			<NcActionSeparator v-if="displaySidebarAction" />
-
-			<!-- Page view options: only displayed in page title menu -->
-			<NcActionCheckbox v-if="!inPageList && !isMobile"
-				:checked="isFullWidthView"
-				@check="onCheckFullWidthView"
-				@uncheck="onUncheckFullWidthView">
-				{{ t('collectives', 'Full width') }}
-			</NcActionCheckbox>
-			<NcActionButton v-if="!inPageList"
-				:close-after-click="true"
-				@click.native="toggle('outline')">
-				<template #icon>
-					<FormatListBulletedIcon :size="20" />
+				<!-- Page view options: only displayed in page title menu -->
+				<template v-if="!inPageList">
+					<NcActionCheckbox
+						v-if="!isMobile"
+						v-model="currentPage.isFullWidth"
+						:disabled="!networkOnline || !currentCollectiveCanEdit"
+						@check="onCheckFullWidthView"
+						@uncheck="onUncheckFullWidthView">
+						{{ t('collectives', 'Full width') }}
+					</NcActionCheckbox>
+					<NcActionButton
+						closeAfterClick
+						@click="toggleOutline(currentPageId)">
+						<template #icon>
+							<FormatListBulletedIcon :size="20" />
+						</template>
+						{{ toggleOutlineString }}
+					</NcActionButton>
+					<NcActionSeparator v-if="!inPageList" />
 				</template>
-				{{ toggleOutlineString }}
-			</NcActionButton>
-			<NcActionSeparator v-if="!inPageList" />
 
-			<!-- Open in files app action: only displayed in page title menu -->
-			<NcActionLink v-if="!inPageList && showFilesLink"
-				:href="filesUrl"
-				icon="icon-files-dark"
-				:close-after-click="true">
-				{{ t('collectives', 'Show in Files') }}
-			</NcActionLink>
+				<!-- Favor page action: not displayed for landing page -->
+				<NcActionButton
+					v-if="!isLandingPage"
+					closeAfterClick
+					:disabled="!networkOnline"
+					@click="toggleFavoritePage({ id: currentCollective.id, pageId })">
+					<template #icon>
+						<StarOffIcon v-if="isFavoritePage(currentCollective.id, pageId)" :size="20" />
+						<StarIcon v-else :size="20" />
+					</template>
+					{{ toggleFavoriteString }}
+				</NcActionButton>
 
-			<!-- Share page action: only displayed in page list -->
-			<NcActionButton v-if="inPageList && currentCollectiveCanShare"
-				:close-after-click="true"
-				@click.native="show('details')"
-				@click="openShareTab">
-				<template #icon>
-					<ShareVariantIcon :size="20" />
-				</template>
-				{{ t('collectives', 'Share with guests') }}
-			</NcActionButton>
+				<!-- Share page action: not displayed for landing page (already in collectives actions there) -->
+				<NcActionButton
+					v-if="currentCollectiveCanShare && !isLandingPage"
+					closeAfterClick
+					@click="openShareTab">
+					<template #icon>
+						<ShareVariantIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Share link') }}
+				</NcActionButton>
 
-			<!-- Edit page emoji: only displayed in page list -->
-			<NcActionButton v-if="inPageList && currentCollectiveCanEdit && !isTemplate && !isLandingPage"
-				:close-after-click="true"
-				@click.native="show('details')"
-				@click="gotoPageEmojiPicker">
-				<template #icon>
-					<EmoticonOutlineIcon :size="20" />
-				</template>
-				{{ setEmojiString }}
-			</NcActionButton>
+				<!-- Edit page emoji: not displayed for landing page -->
+				<NcActionButton
+					v-if="currentCollectiveCanEdit && !isLandingPage"
+					closeAfterClick
+					:disabled="!networkOnline"
+					@click="gotoPageEmojiPicker">
+					<template #icon>
+						<EmoticonIcon :size="20" />
+					</template>
+					{{ setEmojiString }}
+				</NcActionButton>
 
-			<!-- Edit template for subpages -->
-			<NcActionButton v-if="currentCollectiveCanEdit && !isTemplate"
-				:close-after-click="true"
-				class="action-button-template"
-				@click.native="show('details')"
-				@click="editTemplate(pageId)">
-				<template #icon>
-					<PagesTemplateIcon :size="18" />
-				</template>
-				{{ editTemplateString }}
-			</NcActionButton>
+				<!-- Open tags modal: always displayed if has edit permissions -->
+				<NcActionButton
+					v-if="currentCollectiveCanEdit"
+					closeAfterClick
+					:disabled="!networkOnline"
+					@click="onOpenTagsModal">
+					<template #icon>
+						<TagMultipleIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Manage tags') }}
+				</NcActionButton>
 
-			<!-- Move/copy page via modal: only displayed in page list -->
-			<NcActionButton v-if="inPageList && currentCollectiveCanEdit && !isLandingPage"
-				:close-after-click="true"
-				@click="onOpenMoveOrCopyModal">
-				<template #icon>
-					<OpenInNewIcon :size="20" />
-				</template>
-				{{ t('collectives', 'Move or copy') }}
-			</NcActionButton>
+				<!-- Move/copy page via modal: always displayed if has edit permissions -->
+				<NcActionButton
+					v-if="currentCollectiveCanEdit && !isLandingPage"
+					closeAfterClick
+					:disabled="!networkOnline"
+					@click="onOpenMoveOrCopyModal">
+					<template #icon>
+						<OpenInNewIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Move or copy') }}
+				</NcActionButton>
 
-			<!-- Delete page -->
-			<NcActionButton v-if="displayDeleteAction"
-				:close-after-click="true"
-				@click="deletePage(pageId)">
-				<template #icon>
-					<DeleteIcon :size="20" />
-				</template>
-				{{ deletePageString }}
-			</NcActionButton>
+				<!-- Download action: always displayed -->
+				<NcActionLink
+					:href="pageDavUrl(pageById(pageId))"
+					:class="{ 'action-link--disabled': !networkOnline }"
+					:download="pageById(pageId).fileName"
+					closeAfterClick>
+					<template #icon>
+						<DownloadIcon :size="20" />
+					</template>
+					{{ t('collectives', 'Download') }}
+				</NcActionLink>
+
+				<!-- Delete page -->
+				<NcActionButton
+					v-if="displayDeleteAction"
+					closeAfterClick
+					:disabled="!networkOnline"
+					@click="deletePage(pageId)">
+					<template #icon>
+						<DeleteIcon :size="20" />
+					</template>
+					{{ deletePageString }}
+				</NcActionButton>
+			</template>
 		</NcActions>
-		<MoveOrCopyModal v-if="showMoveOrCopyModal"
-			:page-id="pageId"
-			:parent-id="parentId"
+		<MoveOrCopyModal
+			v-if="showMoveOrCopyModal"
+			:pageId
+			:parentId
 			@close="onCloseMoveOrCopyModal" />
+		<TagsModal
+			v-if="showTagsModal"
+			:pageId
+			@close="onCloseTagsModal" />
 	</div>
 </template>
 
 <script>
-import { mapActions, mapGetters, mapMutations } from 'vuex'
-import { generateUrl } from '@nextcloud/router'
-import { SET_FULL_WIDTH_VIEW } from '../../store/actions.js'
-import { NcActions, NcActionButton, NcActionCheckbox, NcActionLink, NcActionSeparator } from '@nextcloud/vue'
-import isMobile from '@nextcloud/vue/dist/Mixins/isMobile.js'
-import CollectiveActions from '../Collective/CollectiveActions.vue'
-import DeleteIcon from 'vue-material-design-icons/Delete.vue'
-import EmoticonOutlineIcon from 'vue-material-design-icons/EmoticonOutline.vue'
+import { emit } from '@nextcloud/event-bus'
+import { t } from '@nextcloud/l10n'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+import { mapActions, mapState } from 'pinia'
+import NcActionButton from '@nextcloud/vue/components/NcActionButton'
+import NcActionCheckbox from '@nextcloud/vue/components/NcActionCheckbox'
+import NcActionLink from '@nextcloud/vue/components/NcActionLink'
+import NcActions from '@nextcloud/vue/components/NcActions'
+import NcActionSeparator from '@nextcloud/vue/components/NcActionSeparator'
+import DockRightIcon from 'vue-material-design-icons/DockRight.vue'
+import EmoticonIcon from 'vue-material-design-icons/EmoticonOutline.vue'
 import FormatListBulletedIcon from 'vue-material-design-icons/FormatListBulleted.vue'
 import OpenInNewIcon from 'vue-material-design-icons/OpenInNew.vue'
+import ShareVariantIcon from 'vue-material-design-icons/ShareVariantOutline.vue'
+import StarOffIcon from 'vue-material-design-icons/StarOffOutline.vue'
+import StarIcon from 'vue-material-design-icons/StarOutline.vue'
+import TagMultipleIcon from 'vue-material-design-icons/TagMultiple.vue'
+import DeleteIcon from 'vue-material-design-icons/TrashCanOutline.vue'
+import DownloadIcon from 'vue-material-design-icons/TrayArrowDown.vue'
+import NcActionCollectiveActions from '../Collective/NcActionCollectiveActions.vue'
 import MoveOrCopyModal from './MoveOrCopyModal.vue'
-import PagesTemplateIcon from '../Icon/PagesTemplateIcon.vue'
-import PageActionLastUser from './PageActionLastUser.vue'
-import ShareVariantIcon from 'vue-material-design-icons/ShareVariant.vue'
+import NcActionLastUser from './NcActionLastUser.vue'
+import TagsModal from './TagsModal.vue'
 import pageMixin from '../../mixins/pageMixin.js'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'PageActionMenu',
 
 	components: {
-		CollectiveActions,
+		NcActionCollectiveActions,
 		MoveOrCopyModal,
 		NcActions,
 		NcActionButton,
@@ -147,16 +200,20 @@ export default {
 		NcActionLink,
 		NcActionSeparator,
 		DeleteIcon,
-		EmoticonOutlineIcon,
+		DockRightIcon,
+		DownloadIcon,
+		EmoticonIcon,
 		FormatListBulletedIcon,
 		OpenInNewIcon,
-		PagesTemplateIcon,
-		PageActionLastUser,
+		NcActionLastUser,
 		ShareVariantIcon,
+		StarIcon,
+		StarOffIcon,
+		TagMultipleIcon,
+		TagsModal,
 	},
 
 	mixins: [
-		isMobile,
 		pageMixin,
 	],
 
@@ -165,71 +222,80 @@ export default {
 			type: Number,
 			required: true,
 		},
+
 		pageUrl: {
 			type: String,
 			default: null,
 		},
+
 		parentId: {
 			type: Number,
 			required: true,
 		},
+
 		timestamp: {
 			type: Number,
 			required: true,
 		},
+
 		lastUserDisplayName: {
 			type: String,
 			default: null,
 		},
+
 		lastUserId: {
 			type: String,
 			default: null,
 		},
+
 		isLandingPage: {
 			type: Boolean,
 			default: false,
 		},
-		isTemplate: {
-			type: Boolean,
-			default: false,
-		},
-		showFilesLink: {
-			type: Boolean,
-			default: false,
-		},
+
 		inPageList: {
 			type: Boolean,
 			default: false,
 		},
+
+		networkOnline: {
+			type: Boolean,
+			required: true,
+		},
+	},
+
+	setup() {
+		const isMobile = useIsMobile()
+		return { isMobile }
 	},
 
 	data() {
 		return {
 			showMoveOrCopyModal: false,
+			showTagsModal: false,
+			collectiveSubmenu: null,
 		}
 	},
 
 	computed: {
-		...mapGetters([
+		...mapState(useRootStore, ['showingSidebar']),
+		...mapState(useCollectivesStore, [
 			'currentCollective',
 			'currentCollectiveCanEdit',
 			'currentCollectiveCanShare',
 			'currentCollectiveIsPageShare',
+			'isFavoritePage',
+		]),
+
+		...mapState(usePagesStore, [
+			'hasOutline',
 			'hasSubpages',
-			'isFullWidthView',
-			'loading',
-			'pagesTreeWalk',
-			'showing',
-			'showTemplates',
-			'visibleSubpages',
+			'pageById',
+			'pageDavUrl',
 		]),
 
 		displaySidebarAction() {
-			return isMobile && !this.inPageList && !this.showing('sidebar')
-		},
-
-		displayCollectiveActions() {
-			return this.inPageList && this.isLandingPage
+			return this.isMobile && !this.inPageList && !this.showingSidebar
 		},
 
 		displayLastEditedInfo() {
@@ -243,19 +309,15 @@ export default {
 		},
 
 		toggleOutlineString() {
-			return this.showing('outline')
+			return this.hasOutline(this.currentPageId)
 				? t('collectives', 'Hide outline')
 				: t('collectives', 'Show outline')
 		},
 
-		filesUrl() {
-			return generateUrl(`/f/${this.currentPage.id}`)
-		},
-
-		editTemplateString() {
-			return this.hasTemplate
-				? t('collectives', 'Edit template for subpages')
-				: t('collectives', 'Add template for subpages')
+		toggleFavoriteString() {
+			return this.isFavoritePage(this.currentCollective.id, this.pageId)
+				? t('collectives', 'Remove from favorites')
+				: t('collectives', 'Add to favorites')
 		},
 
 		setEmojiString() {
@@ -265,69 +327,49 @@ export default {
 		deletePageString() {
 			return this.hasSubpages(this.pageId)
 				? t('collectives', 'Delete page and subpages')
-				: this.isTemplate
-					? t('collectives', 'Delete template')
-					: t('collectives', 'Delete page')
-		},
-
-		hasTemplate() {
-			return !!this.templatePage(this.pageId)
-		},
-
-		/**
-		 * Other apps can register an extra collective action via
-		 * OCA.Collectives.CollectiveExtraAction
-		 */
-		collectiveExtraAction() {
-			const collectiveExtraAction = this.OCA.Collectives?.CollectiveExtraAction
-			if (!collectiveExtraAction) {
-				return null
-			}
-
-			const pageIds = this.pagesTreeWalk().map(p => p.id)
-			return {
-				title: collectiveExtraAction.title ?? t('collectives', 'Extra action'),
-				click: () => collectiveExtraAction.click(pageIds) ?? function() {},
-			}
+				: t('collectives', 'Delete page')
 		},
 	},
 
 	methods: {
-		...mapMutations([
+		t,
+
+		...mapActions(useRootStore, [
 			'setActiveSidebarTab',
-			'show',
-			'toggle',
+			'showSidebar',
+			'toggleSidebar',
 		]),
 
-		...mapActions({
-			dispatchSetFullWidthView: SET_FULL_WIDTH_VIEW,
-		}),
+		...mapActions(useCollectivesStore, [
+			'toggleFavoritePage',
+		]),
+
+		...mapActions(usePagesStore, [
+			'setFullWidthView',
+			'toggleOutline',
+		]),
 
 		onCheckFullWidthView() {
-			this.dispatchSetFullWidthView(true)
+			this.setFullWidthView({ pageId: this.currentPageId, fullWidthView: true })
 		},
 
 		onUncheckFullWidthView() {
-			this.dispatchSetFullWidthView(false)
+			this.setFullWidthView({ pageId: this.currentPageId, fullWidthView: false })
 		},
 
-		openShareTab() {
-			if (this.pageUrl && (this.currentPage.id !== this.pageId)) {
-				this.$router.push(this.pageUrl)
+		async openShareTab() {
+			if (this.pageUrl && (this.currentPageId !== this.pageId)) {
+				await this.$router.push(this.pageUrl)
 			}
-			this.$nextTick(() => {
-				this.show('sidebar')
-				this.setActiveSidebarTab('sharing')
-			})
+			this.showSidebar()
+			this.setActiveSidebarTab('sharing')
 		},
 
-		gotoPageEmojiPicker() {
-			if (this.pageUrl && (this.currentPage.id !== this.pageId)) {
-				this.$router.push(this.pageUrl)
+		async gotoPageEmojiPicker() {
+			if (this.pageUrl && (this.currentPageId !== this.pageId)) {
+				await this.$router.push(this.pageUrl)
 			}
-			this.$nextTick(() => {
-				this.show('pageEmojiPicker')
-			})
+			emit('collectives:page:open-emoji-picker')
 		},
 
 		onOpenMoveOrCopyModal() {
@@ -337,6 +379,21 @@ export default {
 		onCloseMoveOrCopyModal() {
 			this.showMoveOrCopyModal = false
 		},
+
+		onOpenTagsModal() {
+			this.showTagsModal = true
+		},
+
+		onCloseTagsModal() {
+			this.showTagsModal = false
+		},
 	},
 }
 </script>
+
+<style scoped lang="scss">
+.action-link--disabled {
+	pointer-events: none;
+	opacity: 0.5;
+}
+</style>

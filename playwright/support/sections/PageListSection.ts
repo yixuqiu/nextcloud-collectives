@@ -1,0 +1,88 @@
+/**
+ * SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import type { Locator, Page } from '@playwright/test'
+
+import { expect } from '@playwright/test'
+
+export class PageListSection {
+	public readonly el: Locator
+	public readonly pageListItems: Locator
+	public readonly filter: Locator
+	public readonly filterTagSelect: Locator
+	public readonly activeFilterTags: Locator
+	public readonly favorites: Locator
+	public readonly favoritesList: Locator
+
+	constructor(public readonly page: Page) {
+		this.el = this.page.locator('.app-navigation__list')
+		this.pageListItems = this.el.locator('.page-list-item')
+		this.filter = this.el.getByRole('textbox', { name: 'Search pages' })
+		this.filterTagSelect = this.page.locator('.page-filter-tag-select')
+		this.activeFilterTags = this.el.locator('.page-filter-tags')
+		this.favorites = this.el.locator('.page-list-favorites')
+		this.favoritesList = this.favorites.locator('.page-list-favorites-list')
+	}
+
+	public getPageItem(title: string): Locator {
+		return this.pageListItems.filter({
+			has: this.page.locator('> .app-navigation-entry').getByText(title, { exact: true }),
+			visible: true,
+		})
+	}
+
+	public async expectPageListOrder(titles: string[]): Promise<void> {
+		await expect(this.pageListItems).toContainText(titles)
+	}
+
+	public async toggleExpandPage(title: string): Promise<void> {
+		await this.getPageItem(title)
+			.locator('.icon-collapse')
+			.click()
+	}
+
+	public getSubpageItems(title: string): Locator {
+		return this.getPageItem(title).locator('.app-navigation-entry__children .page-list-item')
+	}
+
+	public async openPage(title: string): Promise<void> {
+		await this.getPageItem(title)
+			.locator('> .app-navigation-entry .app-navigation-entry-link')
+			.click()
+	}
+
+	public async clickPageAction(title: string, action: string): Promise<void> {
+		// Favorite pages are listed twice, either entry has the same actions
+		const entry = this.getPageItem(title).first().locator('> .app-navigation-entry')
+		// The actions menu is only shown on hover
+		await entry.hover()
+		await entry.getByRole('button', { name: 'Actions' }).click()
+		await this.page.getByRole('menuitem', { name: action, exact: true }).click()
+	}
+
+	public async clickPageListOption(option: string): Promise<void> {
+		await this.el.getByRole('button', { name: 'Page list options', exact: true }).click()
+		await this.page.getByRole('menuitem', { name: option, exact: true }).click()
+	}
+
+	public async sortBy(option: string): Promise<void> {
+		await this.clickPageListOption(option)
+	}
+
+	public async collapseAll(): Promise<void> {
+		await this.clickPageListOption('Collapse all pages')
+	}
+
+	public async addPage(parentTitle: string): Promise <void> {
+		const item = this.getPageItem(parentTitle)
+		// The add-subpage button is only shown on hover
+		await item.hover()
+		await item.getByRole('button', { name: 'Add a subpage' }).click()
+	}
+
+	public async addTopLevelPage(): Promise<void> {
+		await this.el.getByRole('button', { name: 'Add a page' }).click()
+	}
+}

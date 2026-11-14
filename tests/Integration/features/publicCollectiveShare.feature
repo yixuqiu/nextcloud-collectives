@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 Feature: publicCollectiveShare
 
   Scenario: Create and share a collective publicly (read-only)
@@ -8,7 +11,7 @@ Feature: publicCollectiveShare
     And anonymous sees pagePath "Readme.md" in public collective "BehatPublicCollective" with owner "jane"
 
   Scenario: Upload and list attachment for page
-    When user "jane" uploads attachment "test.png" to "firstpage" with file path "/" in "BehatPublicCollective"
+    When user "jane" uploads attachment "test.png" via webdav to "firstpage" with file path "/" in "BehatPublicCollective"
     Then anonymous sees attachment "test.png" with mimetype "image/png" for "firstpage" in public collective "BehatPublicCollective" with owner "jane"
 
   Scenario: Create a second public share
@@ -44,7 +47,7 @@ Feature: publicCollectiveShare
     Then user "jane" doesn't see pagePath "secondpage.md" in "BehatPublicCollective"
 
   Scenario: Fail to restore+delete pages in read-only collective
-    When user "jane" unsets editing permissions for collective "BehatPublicCollective"
+    When user "jane" unsets editing permissions for collective share "BehatPublicCollective"
     Then anonymous fails to restore page "secondpage" from trash in public collective "BehatPublicCollective" with owner "jane"
     And anonymous fails to delete page "secondpage" from trash in public collective "BehatPublicCollective" with owner "jane"
 
@@ -71,5 +74,4 @@ Feature: publicCollectiveShare
     Then anonymous fails to see public share with stored token
 
   Scenario: Trash and delete collective and team with all remaining pages
-    Then user "jane" trashes collective "BehatPublicCollective"
-    And user "jane" deletes collective+team "BehatPublicCollective"
+    Then user "jane" trashes and deletes collective "BehatPublicCollective"

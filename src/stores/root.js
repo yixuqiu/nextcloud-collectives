@@ -1,0 +1,64 @@
+/**
+ * SPDX-FileCopyrightText: 2024 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import { loadState } from '@nextcloud/initial-state'
+import { useSessionStorage } from '@vueuse/core'
+import { defineStore } from 'pinia'
+import { editorApiAttachments, editorApiReaderFileId, editorApiUpdateReadonlyBarProps } from '../constants.js'
+
+const STORE_PREFIX = 'collectives/pinia/root/'
+
+export const useRootStore = defineStore('root', {
+	state: () => ({
+		loadings: {},
+		printView: false,
+		showingSidebar: useSessionStorage(STORE_PREFIX + 'showingSidebar', false),
+		activeSidebarTab: useSessionStorage(STORE_PREFIX + 'activeSidebarTab', 'attachments'),
+		collectiveParam: '',
+		collectiveId: null,
+		pageParam: '',
+		pageId: null,
+		shareTokenParam: '',
+		fileIdQuery: '',
+		isGuest: loadState('collectives', 'is_guest', false),
+	}),
+
+	getters: {
+		loading: (state) => (aspect) => state.loadings[aspect],
+
+		isPublic() { return !!this.shareTokenParam },
+
+		editorApiVersionCheck: () => (requiredVersion) => {
+			const apiVersion = window.OCA?.Text?.apiVersion || '0'
+			return apiVersion.localeCompare(requiredVersion, undefined, { numeric: true, sensitivity: 'base' }) >= 0
+		},
+
+		editorApiFlags() {
+			const flags = []
+			if (this.editorApiVersionCheck('1.1')) {
+				flags.push(editorApiReaderFileId)
+			}
+			if (this.editorApiVersionCheck('1.2')) {
+				flags.push(editorApiUpdateReadonlyBarProps)
+			}
+			if (this.editorApiVersionCheck('1.4')) {
+				flags.push(editorApiAttachments)
+			}
+			return flags
+		},
+	},
+
+	actions: {
+		load(aspect) { this.loadings[aspect] = true },
+		done(aspect) { this.loadings[aspect] = false },
+
+		showSidebar() { this.showingSidebar = true },
+		hideSidebar() { this.showingSidebar = false },
+		toggleSidebar() { this.showingSidebar = !this.showingSidebar },
+
+		setPrintView() { this.printView = true },
+		setActiveSidebarTab(id) { this.activeSidebarTab = id },
+	},
+})

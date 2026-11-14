@@ -1,21 +1,54 @@
-const byName = (a, b) => a.name.localeCompare(b.name, OC.getLanguage())
-const byTitle = (a, b) => a.title.localeCompare(b.title, OC.getLanguage())
-const byTimestamp = (a, b) => b.timestamp - a.timestamp
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
-const byOrder = (a, b) => {
+const byName = (a, b) => a.name.localeCompare(b.name, window.OC.getLanguage(), { numeric: true })
+const byTitleAsc = (a, b) => a.title.localeCompare(b.title, window.OC.getLanguage(), { numeric: true })
+const byTitleDesc = (a, b) => byTitleAsc(b, a)
+const byTimeAsc = (a, b) => b.timestamp - a.timestamp
+const byTimeDesc = (a, b) => byTimeAsc(b, a)
+
+/**
+ * Sort according to the arrays in object.indices
+ *
+ * @param {object} a first sortable object
+ * @param {object} b second sortable object
+ */
+function byIndices(a, b) {
+	// Pages that are not in the sort order go to the end.
+	const sortA = a.indices.map((i) => i === -1 ? Number.MAX_SAFE_INTEGER : i)
+	const sortB = b.indices.map((i) => i === -1 ? Number.MAX_SAFE_INTEGER : i)
+	if (sortA > sortB) {
+		return 1
+	}
+	if (sortA < sortB) {
+		return -1
+	}
+	return 0
+}
+
+/**
+ *
+ * @param {object} a first sortable object
+ * @param {object} b second sortable object
+ */
+function byOrder(a, b) {
 	if (a.index >= 0 && b.index >= 0) {
 		// both are in the sort order - sort lower index first
 		return a.index - b.index
 	} else {
-		// not in sort order (index = -1) -> put at the end sorted by title
-		return b.index - a.index || byTitle(a, b)
+		// not in sort order (index = -1) -> put at the end sorted ascending by title
+		return b.index - a.index || byTitleAsc(a, b)
 	}
 }
 
 const pageOrders = {
 	byOrder: 0,
-	byTimestamp: 1,
-	byTitle: 2,
+	byTimeAsc: 1,
+	byTitleAsc: 2,
+	byTimeDesc: 3,
+	byTitleDesc: 4,
 }
 
 // Invert key and value of pageOrders
@@ -23,10 +56,13 @@ const pageOrdersByNumber = Object.entries(pageOrders)
 	.reduce((obj, [a, b]) => ({ ...obj, [b]: a }), {})
 
 export {
+	byIndices,
 	byName,
-	byTitle,
-	byTimestamp,
 	byOrder,
+	byTimeAsc,
+	byTimeDesc,
+	byTitleAsc,
+	byTitleDesc,
 	pageOrders,
 	pageOrdersByNumber,
 }

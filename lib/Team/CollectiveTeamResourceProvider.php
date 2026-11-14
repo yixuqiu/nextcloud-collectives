@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2024 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Team;
 
 use OCA\Collectives\AppInfo\Application;
@@ -14,7 +19,12 @@ use OCP\Teams\ITeamResourceProvider;
 use OCP\Teams\TeamResource;
 
 class CollectiveTeamResourceProvider implements ITeamResourceProvider {
-	public function __construct(private CollectiveMapper $collectiveMapper, private CollectiveService $collectiveService, private IURLGenerator $urlGenerator, private ?string $userId) {
+	public function __construct(
+		private readonly CollectiveMapper $collectiveMapper,
+		private readonly CollectiveService $collectiveService,
+		private readonly IURLGenerator $urlGenerator,
+		private readonly ?string $userId,
+	) {
 
 	}
 
@@ -26,8 +36,15 @@ class CollectiveTeamResourceProvider implements ITeamResourceProvider {
 		return 'Collective';
 	}
 
+	/**
+	 * @throws NotFoundException
+	 */
 	public function getIconSvg(): string {
-		return file_get_contents(__DIR__ . '/../../img/collectives.svg');
+		$icon = file_get_contents(__DIR__ . '/../../img/collectives.svg');
+		if ($icon === false) {
+			throw new NotFoundException('Failed to read file content of img/collectives.svg');
+		}
+		return $icon;
 	}
 
 	public function getSharedWith(string $teamId): array {
@@ -54,7 +71,8 @@ class CollectiveTeamResourceProvider implements ITeamResourceProvider {
 	}
 
 	public function isSharedWithTeam(string $teamId, string $resourceId): bool {
-		// TODO: Implement isSharedWithTeam() method.
+		$teamIds = $this->getTeamsForResource($resourceId);
+		return in_array($teamId, $teamIds, true);
 	}
 
 	public function getTeamsForResource(string $resourceId): array {

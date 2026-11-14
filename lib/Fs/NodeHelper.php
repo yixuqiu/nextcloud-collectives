@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Fs;
 
 use OCA\Collectives\Model\PageInfo;
@@ -9,19 +14,23 @@ use OCA\Collectives\Service\NotFoundException;
 use OCA\Collectives\Service\NotPermittedException;
 use OCP\Files\File;
 use OCP\Files\Folder;
+use OCP\Files\GenericFileException;
 use OCP\Files\InvalidPathException;
 use OCP\Files\NotFoundException as FilesNotFoundException;
 use OCP\Files\NotPermittedException as FilesNotPermittedException;
 use OCP\IDBConnection;
 use OCP\IL10N;
 use OCP\Lock\LockedException;
+use Psr\Log\LoggerInterface;
 
 class NodeHelper {
-	private bool $db4ByteSupport;
+	private readonly bool $db4ByteSupport;
 
 	public function __construct(
 		IDBConnection $db,
-		private IL10N $l10n) {
+		private readonly IL10N $l10n,
+		private readonly LoggerInterface $logger,
+	) {
 		$this->db4ByteSupport = $db->supports4ByteText();
 	}
 
@@ -29,12 +38,12 @@ class NodeHelper {
 	 * @throws NotFoundException
 	 */
 	public function getFileById(Folder $folder, int $id): File {
-		$file = $folder->getById($id);
+		$file = $folder->getFirstNodeById($id);
 
-		if (count($file) <= 0 || !($file[0] instanceof File)) {
+		if (!($file instanceof File)) {
 			throw new NotFoundException('File not found: ' . $id);
 		}
-		return $file[0];
+		return $file;
 	}
 
 	public static function generateFilename(Folder $folder, string $filename, string $suffix = ''): string {
@@ -46,7 +55,7 @@ class NodeHelper {
 		// Append ' (#)' if filename conflict ('#' starting at 2 and incremented if necessary)
 		$match = preg_match('/\((?P<id>\d+)\)$/u', $filename, $matches);
 		if ($match) {
-			$newId = ((int) $matches['id']) + 1;
+			$newId = ((int)$matches['id']) + 1;
 			$newFilename = preg_replace(
 				'/(.*)\s\((\d+)\)$/u',
 				'$1 (' . $newId . ')',
@@ -99,11 +108,13 @@ class NodeHelper {
 	 * @throws NotFoundException
 	 * @throws NotPermittedException
 	 */
-	public static function getContent(File $file): string {
+	public function getContent(File $file): string {
 		try {
 			$content = $file->getContent();
-		} catch (FilesNotPermittedException | LockedException $e) {
+		} catch (FilesNotPermittedException|LockedException $e) {
 			throw new NotPermittedException('Failed to read file content for ' . $file->getPath(), 0, $e);
+		} catch (GenericFileException $e) {
+			throw new NotFoundException('Failed to read file content for ' . $file->getPath(), 0, $e);
 		}
 
 		// blank files return false when using object storage as primary storage
@@ -111,7 +122,7 @@ class NodeHelper {
 			if ($file->getSize() === 0) {
 				$content = '';
 			}
-		} catch (InvalidPathException | FilesNotFoundException $e) {
+		} catch (InvalidPathException|FilesNotFoundException $e) {
 			throw new NotFoundException('Failed to read file content for ' . $file->getPath(), 0, $e);
 		}
 
@@ -120,10 +131,45 @@ class NodeHelper {
 		}
 
 		if (!mb_check_encoding($content, 'UTF-8')) {
-			$content = mb_convert_encoding($content, 'UTF-8');
+			$convertedContent = mb_convert_encoding($content, 'UTF-8');
+			if ($convertedContent !== false) {
+				$content = $convertedContent;
+			} else {
+				$this->logger->warning('Failed convert file content to UTF-8 for ' . $file->getPath());
+			}
 		}
 
 		return $content;
+	}
+
+	public static function getTitleFromFile(File $file): string {
+		if (self::isLandingPage($file)) {
+			return '';
+		}
+
+		if (self::isIndexPage($file)) {
+			$dirName = dirname($file->getInternalPath());
+			$dirName = $dirName === '.' ? '' : $dirName;
+			return basename($dirName);
+		}
+
+		return basename($file->getName(), PageInfo::SUFFIX);
+	}
+
+	/**
+	 * @throws NotFoundException
+	 * @throws NotPermittedException
+	 */
+	public static function putContent(File $file, string $content): void {
+		if (!mb_check_encoding($content, 'UTF-8')) {
+			$content = mb_convert_encoding($content, 'UTF-8');
+		}
+
+		try {
+			$file->putContent($content);
+		} catch (FilesNotPermittedException|LockedException $e) {
+			throw new NotPermittedException('Failed to write file content for ' . $file->getPath(), 0, $e);
+		}
 	}
 
 	public static function isPageFilename(string $name): bool {
@@ -170,9 +216,9 @@ class NodeHelper {
 	public static function folderHasSubPages(Folder $folder): bool {
 		try {
 			foreach ($folder->getDirectoryListing() as $node) {
-				if ($node instanceof File &&
-					self::isPage($node) &&
-					!self::isIndexPage($node)) {
+				if ($node instanceof File
+					&& self::isPage($node)
+					&& !self::isIndexPage($node)) {
 					return true;
 				}
 
@@ -189,14 +235,14 @@ class NodeHelper {
 	public static function folderHasSubPage(Folder $folder, string $title): int {
 		try {
 			foreach ($folder->getDirectoryListing() as $node) {
-				if ($node instanceof File &&
-					strcmp($node->getName(), $title . PageInfo::SUFFIX) === 0) {
+				if ($node instanceof File
+					&& strcmp($node->getName(), $title . PageInfo::SUFFIX) === 0) {
 					return 1;
 				}
 
-				if ($node instanceof Folder &&
-					strcmp($node->getName(), $title) === 0 &&
-					$node->nodeExists(PageInfo::INDEX_PAGE_TITLE . PageInfo::SUFFIX)) {
+				if ($node instanceof Folder
+					&& strcmp($node->getName(), $title) === 0
+					&& $node->nodeExists(PageInfo::INDEX_PAGE_TITLE . PageInfo::SUFFIX)) {
 					return 2;
 				}
 			}

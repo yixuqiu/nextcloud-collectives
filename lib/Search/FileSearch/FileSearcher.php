@@ -2,122 +2,184 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2025 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Search\FileSearch;
 
-use OCP\Files\File;
-use OCP\Files\NotFoundException;
-use PDO;
-use TeamTNT\TNTSearch\Support\TokenizerInterface;
-use TeamTNT\TNTSearch\TNTSearch;
+use Exception;
+use OCA\Collectives\Search\FileSearch\Db\SearchDocMapper;
+use OCA\Collectives\Search\FileSearch\Db\SearchFileMapper;
+use OCA\Collectives\Search\FileSearch\Db\SearchWordMapper;
+use OCA\Collectives\Search\FileSearch\Stemmer\Stemmer;
+use OCA\Collectives\Search\FileSearch\Tokenizer\ClauseTokenizer;
+use OCA\Collectives\Search\FileSearch\Tokenizer\WordTokenizer;
 
-/**
- * @property PDO|null $index;
- */
-class FileSearcher extends TNTSearch {
-	public const DEFAULT_CONFIG = [
-		'tokenizer' => WordTokenizer::class,
-		'wal' => false,
-		'driver' => 'filesystem',
-		'storage' => ''
-	];
+class FileSearcher {
+	private const TOKEN_CANDIDATE_LIMIT = 500;
+	private const SEARCH_RESULT_LIMIT = 50;
+	private const FUZZY_PREFIX_LENGTH = 3;
+	private const FUZZY_MAX_DISTANCE = 1;
+	private const MATCH_TYPE_EXACT = 3;
+	private const MATCH_TYPE_PREFIX = 2;
+	private const MATCH_TYPE_STEM = 1;
 
-	public const SUPPORTED_LANGUAGES = [
-		'ar' => 'Arabic',
-		'cr' => 'Croatian',
-		'fr' => 'French',
-		'de' => 'German',
-		'en' => 'Porter',
-		'it' => 'Italian',
-		'lv' => 'Latvian',
-		'pl' => 'Polish',
-		'pt' => 'Portuguese',
-		'ru' => 'Russian',
-		'uk' => 'Ukrainian',
-	];
-
-	private const UNSUPPORTED_LANGUAGE = 'No';
-
-	protected FileIndexer $indexer;
-	private ?string $language;
-
-	public function __construct(?string $language = null) {
-		parent::__construct();
-		$this->loadConfig();
-		$this->asYouType(true);
-		$this->fuzziness(true);
-		$this->language = $language;
+	public function __construct(
+		private readonly SearchWordMapper $wordMapper,
+		private readonly SearchDocMapper $docMapper,
+		private readonly SearchFileMapper $fileMapper,
+		private readonly WordTokenizer $tokenizer,
+		private readonly ClauseTokenizer $clauseTokenizer,
+		private readonly Stemmer $stemmer,
+	) {
 	}
 
-	public function loadConfig(array $config = self::DEFAULT_CONFIG): void {
-		parent::loadConfig($config);
-		$this->indexer = new FileIndexer($this->engine);
-		$this->indexer->loadConfig($config);
-	}
+	public function search(int $collectiveId, string $query): array {
+		$languages = $this->fileMapper->getLanguagesByCollective($collectiveId) ?: [null];
 
-	/**
-	 * @param string $phrase
-	 * @param int    $numOfResults
-	 */
-	public function search($phrase, $numOfResults = 1000): array {
-		$this->setStemmer();
-		$this->setTokenizer();
-		return parent::search($phrase, $numOfResults);
-	}
+		$tokens = null;
+		foreach ($languages as $language) {
+			$languageTokens = $this->tokenizer->tokenize($query, $language);
+			$tokens = $tokens === null ? $languageTokens : array_intersect($tokens, $languageTokens);
+		}
+		$tokens = array_values($tokens ?? []);
 
-	/**
-	 * @throws FileSearchException
-	 */
-	public function selectIndexFile(File $indexFile): FileIndexer {
-		try {
-			$path = $indexFile->getStorage()->getLocalFile($indexFile->getInternalPath());
-		} catch (NotFoundException) {
-			throw new FileSearchException('File searcher could not find storage for index file.');
+		if (empty($tokens)) {
+			return [];
 		}
 
-		if (!$path) {
-			throw new FileSearchException('File searcher could not create local index.');
+		$tokenResults = [];
+		$fileIdSets = [];
+		$lastIndex = array_key_last($tokens);
+
+		foreach ($tokens as $index => $token) {
+			$isLastToken = $index === $lastIndex;
+			$result = $this->findWordIdsForToken($collectiveId, $token, $languages, $isLastToken);
+			if (empty($result['wordIds'])) {
+				return [];
+			}
+
+			$docs = $this->docMapper->findDocumentsByWords($collectiveId, $result['wordIds'], self::TOKEN_CANDIDATE_LIMIT);
+			if (empty($docs)) {
+				return [];
+			}
+
+			$tokenResults[] = ['matchType' => $result['matchType'], 'docs' => $docs];
+			$fileIdSets[] = array_column($docs, 'file_id');
 		}
 
-		return $this->selectIndex($path);
-	}
-
-	/**
-	 * @param string $indexName
-	 * @throws FileSearchException
-	 */
-	public function selectIndex($indexName): FileIndexer {
-		if (!file_exists($indexName)) {
-			throw new FileSearchException('Could not find an index for the collective.');
+		$matchingFileIds = array_intersect(...$fileIdSets);
+		if (empty($matchingFileIds)) {
+			return [];
 		}
-		$this->index = new PDO('sqlite:' . $indexName);
-		$this->index->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-		$this->indexer->setIndex($this->index);
-		$this->indexer->setLanguage($this->language ?? self::UNSUPPORTED_LANGUAGE);
-
-		return $this->indexer;
+		return $this->rankResults($tokenResults, $matchingFileIds);
 	}
 
-	/**
-	 * @param string $indexName
-	 * @param bool $disableOutput
-	 */
-	public function createIndex($indexName = '', $disableOutput = false): FileIndexer {
-		$this->indexer->createIndex($indexName);
-		$this->indexer->setLanguage($this->language ?? self::UNSUPPORTED_LANGUAGE);
+	public function rankByBigrams(string $query, array $files): array {
+		$phrases = $this->clauseTokenizer->tokenize($query);
 
-		$this->index = $this->indexer->getIndex();
-		return $this->indexer;
+		if (empty($phrases)) {
+			return $files;
+		}
+
+		$scored = [];
+		foreach ($files as $file) {
+			try {
+				$content = mb_strtolower($file->getContent());
+			} catch (Exception) {
+				continue;
+			}
+
+			$score = 0;
+
+			foreach ($phrases as $phrase) {
+				if (empty($phrase)) {
+					continue;
+				}
+				$count = substr_count(mb_strtolower($content), mb_strtolower($phrase));
+				$score += $count;
+			}
+
+			$scored[$file->getId()] = ['file' => $file, 'score' => $score];
+		}
+
+		uasort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+
+		return array_map(fn ($item) => $item['file'], $scored);
 	}
 
-	public function createInMemoryIndex(): FileIndexer {
-		return $this->createIndex(':memory:');
+	private function fuzzySearchWord(int $collectiveId, string $term): array {
+		if (mb_strlen($term) < self::FUZZY_PREFIX_LENGTH) {
+			return [];
+		}
+
+		$prefix = mb_substr($term, 0, self::FUZZY_PREFIX_LENGTH);
+		$candidates = $this->wordMapper->findByCollectiveAndPrefix($collectiveId, $prefix, self::TOKEN_CANDIDATE_LIMIT);
+
+		$matches = [];
+		foreach ($candidates as $candidate) {
+			$distance = levenshtein($candidate->getTerm(), $term);
+			if ($distance <= self::FUZZY_MAX_DISTANCE) {
+				$matches[] = $candidate;
+			}
+		}
+
+		return $matches;
 	}
 
-	public function getTokenizer(): ?TokenizerInterface {
-		$this->index && $this->setTokenizer();
-		$configTokenizer = $this->config['tokenizer'];
-		$tokenizer = $this->tokenizer ?: new $configTokenizer();
-		return ($tokenizer instanceof TokenizerInterface) ? $tokenizer : null;
+	private function findWordIdsForToken(int $collectiveId, string $token, array $languages, bool $isLastToken = false): array {
+		// step 1: exact match
+		$exactWord = $this->wordMapper->findByCollectiveAndTerm($collectiveId, $token);
+		if ($exactWord !== null && !$isLastToken) {
+			return ['wordIds' => [$exactWord->getId()], 'matchType' => self::MATCH_TYPE_EXACT];
+		}
+
+		// step 2: prefix match
+		$prefixWords = $this->wordMapper->findByCollectiveAndPrefix($collectiveId, $token, self::TOKEN_CANDIDATE_LIMIT);
+		if ($exactWord !== null || !empty($prefixWords)) {
+			$wordIds = array_unique(array_map(fn ($w) => $w->getId(), $prefixWords));
+			if ($exactWord !== null && !in_array($exactWord->getId(), $wordIds)) {
+				$wordIds[] = $exactWord->getId();
+			}
+			$matchType = $exactWord !== null ? self::MATCH_TYPE_EXACT : self::MATCH_TYPE_PREFIX;
+			return ['wordIds' => $wordIds, 'matchType' => $matchType];
+		}
+
+		// step 3: stem match with fuzzy fallback
+		$wordIds = [];
+		foreach ($languages as $language) {
+			$stem = $this->stemmer->stem($token, $language);
+			$stemWords = $this->wordMapper->findByCollectiveAndStem($collectiveId, $stem)
+				?: $this->fuzzySearchWord($collectiveId, $token);
+			foreach ($stemWords as $word) {
+				$wordIds[] = $word->getId();
+			}
+		}
+		return ['wordIds' => array_unique($wordIds), 'matchType' => self::MATCH_TYPE_STEM];
+	}
+
+	private function rankResults(array $tokenResults, array $matchingFileIds): array {
+		$fileScores = [];
+		$allDocs = [];
+
+		foreach ($tokenResults as $tokenResult) {
+			foreach ($tokenResult['docs'] as $doc) {
+				$fileId = $doc['file_id'];
+				if (!in_array($fileId, $matchingFileIds)) {
+					continue;
+				}
+				$fileScores[$fileId] = ($fileScores[$fileId] ?? 0)
+					+ $tokenResult['matchType']
+					* log1p((int)$doc['total_hits']);
+				$allDocs[$fileId] ??= $doc;
+			}
+		}
+
+		usort($allDocs, fn ($a, $b) => ($fileScores[$b['file_id']] ?? 0) <=> ($fileScores[$a['file_id']] ?? 0));
+
+		return array_slice($allDocs, 0, self::SEARCH_RESULT_LIMIT);
 	}
 }

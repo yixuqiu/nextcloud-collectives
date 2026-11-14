@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 Feature: collective
 
   Scenario: Create a collective and add members
@@ -39,6 +42,9 @@ Feature: collective
 
   Scenario: Trash an owned collective
     When user "jane" trashes collective "BehatCollective"
+
+  Scenario: Fail to create a collective as guest
+    Then user "guest" fails to create collective "BehatGuestCollective"
 
   Scenario: Fail to delete a team via teams API
     Then user "jane" fails to delete team "BehatCollective"

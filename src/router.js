@@ -1,40 +1,30 @@
-/**
- * @copyright Copyright (c) 2020 Azul <azul@riseup.net>
- *
- * @author Azul <azul@riseup.net>
- *
- * @license AGPL-3.0-or-later
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- */
-import Vue from 'vue'
-import VueRouter from 'vue-router'
 import { generateUrl } from '@nextcloud/router'
-import Home from './views/Home.vue'
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+import { createRouter, createWebHistory } from 'vue-router'
 import CollectivePrintView from './views/CollectivePrintView.vue'
 import CollectiveView from './views/CollectiveView.vue'
-
-Vue.use(VueRouter)
+import HomeView from './views/HomeView.vue'
 
 const routes = [
 	{
 		path: '/',
-		component: Home,
+		component: HomeView,
+	},
+	{
+		path: '/_/print/:collectiveSlug-:collectiveId(\\d+)',
+		component: CollectivePrintView,
+		props: (route) => route.params,
 	},
 	{
 		path: '/_/print/:collective',
+		component: CollectivePrintView,
+		props: (route) => route.params,
+	},
+	{
+		path: '/p/:token/print/:collectiveSlug-:collectiveId(\\d+)',
 		component: CollectivePrintView,
 		props: (route) => route.params,
 	},
@@ -44,21 +34,44 @@ const routes = [
 		props: (route) => route.params,
 	},
 	{
+		path: '/p/:token/:collectiveSlug-:collectiveId(\\d+)',
+		component: CollectiveView,
+		props: (route) => route.params,
+		children: [
+			{ path: ':pageSlug-:pageId(\\d+)', component: CollectiveView },
+			{ path: ':page(.*)', component: CollectiveView },
+		],
+	},
+	{
 		path: '/p/:token/:collective',
 		component: CollectiveView,
 		props: (route) => route.params,
-		children: [{ path: ':page*' }],
+		children: [
+			{ path: ':pageSlug-:pageId(\\d+)', component: CollectiveView },
+			{ path: ':page(.*)', component: CollectiveView },
+		],
+	},
+	{
+		path: '/:collectiveSlug-:collectiveId(\\d+)',
+		component: CollectiveView,
+		props: (route) => route.params,
+		children: [
+			{ path: ':pageSlug-:pageId(\\d+)', component: CollectiveView },
+			{ path: ':page(.*)', component: CollectiveView },
+		],
 	},
 	{
 		path: '/:collective',
 		component: CollectiveView,
 		props: (route) => route.params,
-		children: [{ path: ':page*' }],
+		children: [
+			{ path: ':pageSlug-:pageId(\\d+)', component: CollectiveView },
+			{ path: ':page(.*)', component: CollectiveView },
+		],
 	},
 ]
 
-export default new VueRouter({
-	mode: 'history',
-	base: generateUrl('/apps/collectives', ''),
+export default createRouter({
+	history: createWebHistory(generateUrl('/apps/collectives')),
 	routes,
 })

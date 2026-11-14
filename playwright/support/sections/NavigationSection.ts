@@ -1,0 +1,120 @@
+/**
+ * SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+import type { Locator, Page } from '@playwright/test'
+
+import { expect } from '@playwright/test'
+
+export class NavigationSection {
+	public readonly el: Locator
+	public readonly collectivesSettingsButton: Locator
+	public readonly collectivesFolderInputEl: Locator
+	public readonly filePickerDialog: Locator
+	public readonly filePickerBreadCrumbs: Locator
+	public readonly filePickerHomeButton: Locator
+
+	constructor(public readonly page: Page) {
+		this.el = this.page.locator('#app-navigation-vue')
+		this.collectivesSettingsButton = this.el.getByRole('button', { name: 'Collectives settings' })
+		this.collectivesFolderInputEl = this.page.getByLabel('Collectives folder')
+		this.filePickerDialog = this.page.getByRole('dialog', { name: 'Select location for collectives' })
+		this.filePickerBreadCrumbs = this.filePickerDialog.locator('.breadcrumb__crumbs')
+		this.filePickerHomeButton = this.filePickerBreadCrumbs.getByRole('button', { name: 'All files' })
+	}
+
+	public async open(): Promise<void> {
+		// Check the toggle, as the closed navigation is moved out of the viewport rather than hidden on mobile
+		const openButton = this.page.getByRole('button', { name: 'Open navigation' })
+		if (await openButton.isVisible()) {
+			await openButton.click()
+		}
+		await expect(this.el).toBeInViewport()
+	}
+
+	public async close(): Promise<void> {
+		await this.page.getByRole('button', { name: 'Close navigation' }).click()
+		// The closed navigation is moved out of the viewport rather than hidden on mobile
+		await expect(this.el).not.toBeInViewport()
+	}
+
+	public async openCollectiveSelector(): Promise<void> {
+		if (await this.page.locator('.collective-selector-list').count() === 0) {
+			await this.el.locator('.collective-selector-trigger').click()
+		}
+	}
+
+	public getCollectiveItem(collectiveName: string): Locator {
+		return this.page.locator('.collective-selector-list').getByRole('listitem')
+			.filter({ has: this.page.getByRole('link', { name: collectiveName }) })
+	}
+
+	public async clickCollectiveMenu(collectiveName: string, action: string): Promise<void> {
+		await this.openCollectiveSelector()
+		await this.getCollectiveItem(collectiveName)
+			.getByRole('link', { name: collectiveName })
+			.click()
+		await this.page.getByRole('button', { name: 'Collective actions' })
+			.click()
+		// The extra `.action-item__popover` locator is needed to not conflict with other button with same name in DOM
+		await this.page.locator('.action-item__popper:visible')
+			.getByRole('button', { name: action, exact: true })
+			.click()
+	}
+
+	public async openNewCollectiveDialog(): Promise<void> {
+		await this.openCollectiveSelector()
+		await this.page.getByRole('button', { name: 'New collective', exact: true }).click()
+		await expect(this.page.getByRole('textbox', { name: 'Name of the collective' })).toBeVisible()
+	}
+
+	public async createCollective(name: string): Promise<void> {
+		await this.openNewCollectiveDialog()
+		await this.page.getByRole('textbox', { name: 'Name of the collective' }).fill(name)
+		await this.page.getByRole('button', { name: 'Add members' }).click()
+		await this.page.getByRole('button', { name: 'Create without members' }).click()
+	}
+
+	public async openCollectivesSettings(): Promise<void> {
+		await this.openCollectiveSelector()
+		await this.collectivesSettingsButton.click()
+	}
+
+	public async openUserFolderSetting(): Promise<Locator> {
+		await this.openCollectivesSettings()
+		await expect(this.collectivesFolderInputEl).toBeEnabled()
+		await this.collectivesFolderInputEl.click()
+		return this.filePickerDialog
+	}
+
+	public getFolderEntry(folderName: string): Locator {
+		return this.filePickerDialog.locator(`[data-testid="file-list-row"][data-filename="${folderName}"]`)
+	}
+
+	public async createFolder(folderName: string): Promise<void> {
+		await this.filePickerDialog.getByRole('button', { name: 'New' }).click()
+		await this.page.getByLabel('New folder').fill(folderName)
+		await this.page.getByRole('button', { name: 'Submit' }).click()
+		await expect(this.filePickerBreadCrumbs.getByRole('button', { name: folderName })).toBeVisible()
+	}
+
+	public async setUserFolder(folderName: string): Promise<void> {
+		await this.openUserFolderSetting()
+		await this.filePickerHomeButton.click()
+		const folder = this.getFolderEntry(folderName)
+		if (!await folder.isVisible()) {
+			await this.createFolder(folderName)
+		} else {
+			await folder.click()
+		}
+
+		// Click "Choose" button to confirm selection
+		const chooseButton = this.filePickerDialog.getByRole('button', { name: 'Choose' })
+		await expect(chooseButton).toBeVisible()
+		await chooseButton.click()
+
+		// Wait for dialog to close and settings to be saved
+		await expect(this.filePickerDialog).not.toBeVisible({ timeout: 5000 })
+	}
+}

@@ -1,11 +1,18 @@
+<!--
+  - SPDX-FileCopyrightText: 2024 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<span :aria-hidden="!title"
+	<span
+		:aria-hidden="!title"
 		:aria-label="title"
 		class="material-design-icon teams-icon"
 		role="img"
 		v-bind="$attrs"
 		@click="$emit('click', $event)">
-		<svg :fill="fillColor"
+		<svg
+			:fill="fillColor"
 			class="material-design-icon__svg"
 			:width="size"
 			:height="size"
@@ -18,19 +25,26 @@
 <script>
 export default {
 	name: 'TeamsIcon',
+
 	props: {
 		title: {
 			type: String,
 			default: '',
 		},
+
 		fillColor: {
 			type: String,
 			default: 'currentColor',
 		},
+
 		size: {
 			type: Number,
 			default: 24,
 		},
 	},
+
+	emits: [
+		'click',
+	],
 }
 </script>

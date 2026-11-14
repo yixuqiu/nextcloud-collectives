@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Db;
 
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -26,12 +31,9 @@ class CollectiveUserSettingsMapper extends QBMapper {
 	 * Provide our own implementation of `insertOrUpdate` as the one from QBMapper throws
 	 * `REASON_NOT_NULL_CONSTRAINT_VIOLATION` for existing entities.
 	 *
-	 * TODO: Migrate to using `CollectiveUserSettings` in type hints once we drop PHP7.3.
-	 *
-	 * @return CollectiveUserSettings
 	 * @throws Exception
 	 */
-	public function insertOrUpdate(Entity $entity): Entity {
+	public function insertOrUpdate(CollectiveUserSettings|Entity $entity): CollectiveUserSettings {
 		if ($entity->getId() === null) {
 			return $this->insert($entity);
 		}
@@ -58,12 +60,13 @@ class CollectiveUserSettingsMapper extends QBMapper {
 	 */
 	public function findByCollectiveAndUser(int $collectiveId, string $userId): ?CollectiveUserSettings {
 		$qb = $this->db->getQueryBuilder();
-		$where = $qb->expr()->andX();
-		$where->add($qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)));
-		$where->add($qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)));
+		$andX = [
+			$qb->expr()->eq('collective_id', $qb->createNamedParameter($collectiveId, IQueryBuilder::PARAM_INT)),
+			$qb->expr()->eq('user_id', $qb->createNamedParameter($userId, IQueryBuilder::PARAM_STR)),
+		];
 		$qb->select('*')
 			->from($this->tableName)
-			->where($where);
+			->where($qb->expr()->andX(...$andX));
 		try {
 			/** @var CollectiveUserSettings $this->findEntity($qb) */
 			return $this->findEntity($qb);

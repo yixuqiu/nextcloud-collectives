@@ -1,29 +1,37 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Service;
 
-use OC\Files\Node\Folder;
 use OC\Search\SearchQuery;
 use OCA\Collectives\Db\Collective;
+use OCA\Collectives\Search\FileSearch\Tokenizer\WordTokenizer;
 use OCA\Collectives\Search\PageContentProvider;
 use OCA\Collectives\Service\CollectiveHelper;
 use OCA\Collectives\Service\PageService;
 use OCA\Collectives\Service\SearchService;
 use OCP\App\IAppManager;
+use OCP\Files\Folder;
 use OCP\IL10N;
 use OCP\IURLGenerator;
 use OCP\IUser;
 use OCP\Search\IFilterCollection;
 use OCP\Search\ISearchQuery;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
-use TypeError;
+use Test\TestCase;
 
 class PageContentProviderTest extends TestCase {
 	private PageContentProvider $provider;
 
 	protected function setUp(): void {
+		parent::setUp();
 		$collective = new Collective();
 		$collective->setId(123);
 
@@ -37,8 +45,8 @@ class PageContentProviderTest extends TestCase {
 			->willReturn([$collective]);
 		/** @var Folder&MockObject $folder */
 		$folder = $this->createMock(Folder::class);
-		$folder->method('getById')
-			->willReturn([]);
+		$folder->method('getFirstNodeById')
+			->willReturn(null);
 		/** @var PageService&MockObject $pageService */
 		$pageService = $this->createMock(PageService::class);
 		$pageService->method('getCollectiveFolder')
@@ -46,13 +54,15 @@ class PageContentProviderTest extends TestCase {
 		/** @var SearchService&MockObject $indexedSearchService */
 		$indexedSearchService = $this->createMock(SearchService::class);
 		$indexedSearchService->method('searchCollective')
-			->willReturn([404 => 'fileData']);
-		/** @var LoggerInterface&MockObject $logger  */
+			->willReturn([['file_id' => 404]]);
+		/** @var LoggerInterface&MockObject $logger */
 		$logger = $this->createMock(LoggerInterface::class);
 		/** @var IAppManager&MockObject $appManager */
 		$appManager = $this->createMock(IAppManager::class);
 		$appManager->method('isEnabledForUser')
 			->willReturn(true);
+		/** @var WordTokenizer&MockObject $tokenizer */
+		$tokenizer = $this->createMock(WordTokenizer::class);
 
 		$this->provider = new PageContentProvider(
 			$l10n,
@@ -61,7 +71,8 @@ class PageContentProviderTest extends TestCase {
 			$pageService,
 			$indexedSearchService,
 			$logger,
-			$appManager
+			$appManager,
+			$tokenizer
 		);
 	}
 
@@ -74,27 +85,14 @@ class PageContentProviderTest extends TestCase {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')
 			->willReturn('jane');
-		try {
-			// Nextcloud << 28
-			$query = new SearchQuery(
-				'Search me!',
-				ISearchQuery::SORT_DATE_DESC,
-				SearchQuery::LIMIT_DEFAULT,
-				null,
-				'collectives.'
-			);
-		} catch (TypeError) {
-			// Nextcloud >= 28
-			$filters = $this->createMock(IFilterCollection::class);
-			$query = new SearchQuery(
-				$filters,
-				ISearchQuery::SORT_DATE_DESC,
-				SearchQuery::LIMIT_DEFAULT,
-				null,
-				'collectives.'
-
-			);
-		}
+		$filters = $this->createMock(IFilterCollection::class);
+		$query = new SearchQuery(
+			$filters,
+			ISearchQuery::SORT_DATE_DESC,
+			SearchQuery::LIMIT_DEFAULT,
+			null,
+			'collectives.'
+		);
 		$response = json_encode($this->provider->search($user, $query));
 		$result = json_decode($response, true);
 

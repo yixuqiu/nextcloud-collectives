@@ -1,15 +1,23 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <!-- dirty hack to workaround https://github.com/nextcloud/nextcloud-vue/issues/3231 -->
 <template>
 	<div>
-		<NcButton v-tooltip="description"
+		<NcButton
+			:title="description"
 			:aria-label="description"
 			class="titleform-button"
-			type="primary"
+			:class="{ mobile: mobile }"
+			:variant
 			@click="handleClick()">
 			<template #icon>
-				<NcLoadingIcon v-if="showLoadingIcon"
+				<NcLoadingIcon
+					v-if="showLoadingIcon"
 					:size="20" />
-				<CheckIcon v-else-if="isTextEdit" :size="20" />
+				<EyeOutlineIcon v-else-if="isTextEdit" :size="20" />
 				<PencilIcon v-else :size="20" />
 			</template>
 			{{ buttonTitle }}
@@ -18,16 +26,20 @@
 </template>
 
 <script>
-import CheckIcon from 'vue-material-design-icons/Check.vue'
-import PencilIcon from 'vue-material-design-icons/Pencil.vue'
-import { NcButton, NcLoadingIcon } from '@nextcloud/vue'
-import { mapGetters, mapMutations } from 'vuex'
+import { t } from '@nextcloud/l10n'
+import { mapActions, mapState } from 'pinia'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
+import EyeOutlineIcon from 'vue-material-design-icons/EyeOutline.vue'
+import PencilIcon from 'vue-material-design-icons/PencilOutline.vue'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'EditButton',
 
 	components: {
-		CheckIcon,
+		EyeOutlineIcon,
 		NcButton,
 		NcLoadingIcon,
 		PencilIcon,
@@ -41,17 +53,20 @@ export default {
 	},
 
 	computed: {
-		...mapGetters([
-			'isTextEdit',
-			'loading',
-		]),
+		...mapState(useRootStore, ['loading']),
+		...mapState(usePagesStore, ['isTextEdit']),
 
 		description() {
 			return this.isTextEdit ? t('collectives', 'Stop editing') : t('collectives', 'Start editing')
 		},
 
 		title() {
-			return this.isTextEdit ? t('collectives', 'Done') : t('collectives', 'Edit')
+			// TRANSLATORS 'Preview' means to switch the editor from edit to read-only mode.
+			return this.isTextEdit ? t('collectives', 'Preview') : t('collectives', 'Edit')
+		},
+
+		variant() {
+			return this.isTextEdit ? 'secondary' : 'primary'
 		},
 
 		buttonTitle() {
@@ -64,14 +79,13 @@ export default {
 	},
 
 	methods: {
-		...mapMutations([
-			'setTextEdit',
-			'setTextView',
-		]),
+		t,
+
+		...mapActions(usePagesStore, ['setTextEdit', 'setTextPreview']),
 
 		handleClick() {
 			if (this.isTextEdit) {
-				this.setTextView()
+				this.setTextPreview()
 			} else {
 				this.setTextEdit()
 			}
@@ -79,3 +93,11 @@ export default {
 	},
 }
 </script>
+
+<style lang="scss" scoped>
+button.titleform-button {
+	&.mobile {
+		padding: 0;
+	}
+}
+</style>

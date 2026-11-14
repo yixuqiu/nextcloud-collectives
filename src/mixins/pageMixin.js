@@ -1,90 +1,68 @@
-import { mapActions, mapGetters, mapMutations, mapState } from 'vuex'
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 import { showError, showSuccess } from '@nextcloud/dialogs'
 import { emit } from '@nextcloud/event-bus'
-import {
-	TRASH_PAGE,
-	GET_PAGES,
-	COPY_PAGE,
-	MOVE_PAGE,
-	COPY_PAGE_TO_COLLECTIVE,
-	MOVE_PAGE_TO_COLLECTIVE,
-	NEW_PAGE,
-	NEW_TEMPLATE,
-	SET_PAGE_EMOJI,
-	SET_PAGE_SUBPAGE_ORDER,
-} from '../store/actions.js'
+import { t } from '@nextcloud/l10n'
+import { mapActions, mapState } from 'pinia'
+import { useCollectivesStore } from '../stores/collectives.js'
+import { usePagesStore } from '../stores/pages.js'
+import { useRootStore } from '../stores/root.js'
+import { useTemplatesStore } from '../stores/templates.js'
 import { scrollToPage } from '../util/scrollToElement.js'
 
 export default {
 	computed: {
-		...mapState({
-			pages: (state) => state.pages.pages,
-			newPageId: (state) => state.pages.newPage?.id,
-		}),
-
-		...mapGetters([
+		...mapState(useCollectivesStore, [
 			'collectiveTitle',
 			'currentCollective',
 			'currentCollectivePath',
-			'currentFileIdPage',
+		]),
+		...mapState(usePagesStore, [
 			'currentPage',
+			'currentPageId',
+			'newPageId',
 			'newPagePath',
 			'pagePath',
 			'pageTitle',
+			'pages',
 			'sortedSubpages',
-			'templatePage',
 		]),
+		...mapState(useTemplatesStore, ['hasTemplates']),
 	},
 
 	methods: {
-		...mapMutations([
-			'done',
+		...mapActions(useRootStore, ['done', 'load']),
+		...mapActions(usePagesStore, [
 			'expand',
-			'load',
+			'addToSubpageOrder',
+			'deleteFromSubpageOrder',
 			'updateSubpageOrder',
+			'getPages',
+			'createPage',
+			'setNewPageParentId',
+			'setPageEmoji',
+			'setPageSubpageOrder',
+			'copyPage',
+			'movePage',
+			'copyPageToCollective',
+			'movePageToCollective',
+			'trashPage',
 		]),
 
-		...mapActions({
-			dispatchGetPages: GET_PAGES,
-			dispatchNewPage: NEW_PAGE,
-			dispatchNewTemplate: NEW_TEMPLATE,
-			dispatchSetPageEmoji: SET_PAGE_EMOJI,
-			dispatchSetPageSubpageOrder: SET_PAGE_SUBPAGE_ORDER,
-			dispatchCopyPage: COPY_PAGE,
-			dispatchMovePage: MOVE_PAGE,
-			dispatchCopyPageToCollective: COPY_PAGE_TO_COLLECTIVE,
-			dispatchMovePageToCollective: MOVE_PAGE_TO_COLLECTIVE,
-			dispatchTrashPage: TRASH_PAGE,
-		}),
-
 		/**
-		 * Open existing or create new template page
+		 * Add a page under the given parent, going through the template picker
+		 * first if the collective has any templates configured
 		 *
 		 * @param {number} parentId ID of the parent page
 		 */
-		async editTemplate(parentId) {
-			const templatePage = this.templatePage(parentId)
-			if (templatePage) {
-				this.$router.push(this.pagePath(templatePage))
-				if (this.showTemplates) {
-					this.$nextTick(() => scrollToPage(templatePage.id))
-				}
-				return
-			}
-
-			try {
-				await this.dispatchNewTemplate(parentId)
-				this.$router.push(this.newPagePath)
-				this.expand(parentId)
-				if (this.showTemplates) {
-					this.$nextTick(() => scrollToPage(this.newPageId))
-				}
-
-				// Parents location changes when the first subpage is created.
-				this.dispatchGetPages(false)
-			} catch (e) {
-				console.error(e)
-				showError(t('collectives', 'Could not create the page'))
+		addPage(parentId) {
+			if (this.hasTemplates) {
+				this.setNewPageParentId(parentId)
+			} else {
+				this.newPage(parentId)
 			}
 		},
 
@@ -92,27 +70,28 @@ export default {
 		 * Create a new page and focus the page automatically
 		 *
 		 * @param {number} parentId ID of the parent page
+		 * @param {null|number} templateId ID of the template to use
 		 */
-		async newPage(parentId) {
+		async newPage(parentId, templateId = null) {
 			const page = {
-				title: t('collectives', 'New Page'),
+				title: t('collectives', 'New page'),
 				parentId,
+				templateId,
 			}
 			try {
-				await this.dispatchNewPage(page)
-				this.$router.push(this.newPagePath)
-				this.expand(parentId)
-				this.$nextTick(() => scrollToPage(this.newPageId))
-
-				// Parents location changes when the first subpage is created.
-				this.dispatchGetPages(false)
+				await this.createPage(page)
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not create the page'))
+				return
 			}
 
-			// Append new page to parent page subpageOrder
-			await this.subpageOrderAdd(parentId, this.newPageId)
+			await this.$router.push(this.newPagePath)
+			this.expand(parentId)
+			this.$nextTick(() => scrollToPage(this.newPageId))
+
+			// Parents location changes when the first subpage is created.
+			this.getPages(false)
 		},
 
 		/**
@@ -123,7 +102,7 @@ export default {
 		 */
 		async setEmoji(pageId, emoji) {
 			try {
-				await this.dispatchSetPageEmoji({ pageId, emoji })
+				await this.setPageEmoji({ pageId, emoji })
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not save emoji for page'))
@@ -138,17 +117,14 @@ export default {
 		 * @param {number} pageId ID of the page
 		 * @param {number} newIndex New index for pageId
 		 */
-		async copyPage(oldParentId, newParentId, pageId, newIndex) {
+		async copy(oldParentId, newParentId, pageId, newIndex) {
 			// Copy subpage to new parent
 			try {
-				this.load('currentPage')
-				await this.dispatchCopyPage({ newParentId, pageId, index: newIndex })
+				await this.copyPage({ newParentId, pageId, index: newIndex })
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not copy page'))
 				return
-			} finally {
-				this.done('currentPage')
 			}
 
 			showSuccess(t('collectives', `Page ${this.pageTitle(pageId)} copied to ${this.pageTitle(newParentId)}`))
@@ -162,17 +138,18 @@ export default {
 		 * @param {number} pageId ID of the page
 		 * @param {number} newIndex New index for pageId
 		 */
-		async movePage(oldParentId, newParentId, pageId, newIndex) {
-			const currentPageId = this.currentPage?.id
-
+		async move(oldParentId, newParentId, pageId, newIndex) {
 			// Add page to subpageOrder of new parent first for instant UI feedback
-			this.subpageOrderAdd(newParentId, pageId, newIndex)
+			this.addToSubpageOrder({ parentId: newParentId, pageId, newIndex })
 
 			// Move subpage to new parent
-			try {
+			if (this.currentPageId === pageId) {
 				this.load('currentPage')
-				await this.dispatchMovePage({ newParentId, pageId, index: newIndex })
+			}
+			try {
+				await this.movePage({ newParentId, pageId, index: newIndex })
 			} catch (e) {
+				console.error('Could not move page', e)
 				showError(t('collectives', 'Could not move page'))
 				return
 			} finally {
@@ -180,12 +157,12 @@ export default {
 			}
 
 			// Redirect to new page path if currentPage got moved
-			if (currentPageId === pageId) {
-				this.$router.replace(this.pagePath(this.currentFileIdPage))
+			if (this.currentPageId === pageId) {
+				this.$router.replace(this.pagePath(this.currentPage))
 			}
 
 			// Remove page from subpageOrder of old parent last
-			this.subpageOrderDelete(oldParentId, pageId)
+			this.deleteFromSubpageOrder({ parentId: oldParentId, pageId })
 
 			showSuccess(t('collectives', `Page ${this.pageTitle(pageId)} moved to ${this.pageTitle(newParentId)}`))
 		},
@@ -199,12 +176,12 @@ export default {
 		 * @param {number} pageId ID of the page
 		 * @param {number} newIndex New index for pageId
 		 */
-		async copyPageToCollective(collectiveId, oldParentId, newParentId, pageId, newIndex) {
+		async copyToCollective(collectiveId, oldParentId, newParentId, pageId, newIndex) {
 			const pageTitle = this.pageTitle(pageId)
 
 			// Copy subpage to new collective
 			try {
-				await this.dispatchCopyPageToCollective({ collectiveId, newParentId, pageId, index: newIndex })
+				await this.copyPageToCollective({ collectiveId, newParentId, pageId, index: newIndex })
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not copy page to another collective'))
@@ -223,13 +200,12 @@ export default {
 		 * @param {number} pageId ID of the page
 		 * @param {number} newIndex New index for pageId
 		 */
-		async movePageToCollective(collectiveId, oldParentId, newParentId, pageId, newIndex) {
-			const currentPageId = this.currentPage?.id
+		async moveToCollective(collectiveId, oldParentId, newParentId, pageId, newIndex) {
 			const pageTitle = this.pageTitle(pageId)
 
 			// Move subpage to new collective
 			try {
-				await this.dispatchMovePageToCollective({ collectiveId, newParentId, pageId, index: newIndex })
+				await this.movePageToCollective({ collectiveId, newParentId, pageId, index: newIndex })
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not move page to another collective'))
@@ -237,12 +213,12 @@ export default {
 			}
 
 			// Redirect to root page if currentPage got moved
-			if (currentPageId === pageId) {
+			if (this.currentPageId === pageId) {
 				this.$router.replace(this.currentCollectivePath)
 			}
 
 			// Remove page from subpageOrder of old parent last
-			this.subpageOrderDelete(oldParentId, pageId)
+			this.deleteFromSubpageOrder({ parentId: oldParentId, pageId })
 
 			showSuccess(t('collectives', `Page ${pageTitle} moved to collective ${this.collectiveTitle(collectiveId)}`))
 		},
@@ -254,10 +230,8 @@ export default {
 		 * @param {number} pageId ID of the page
 		 */
 		async deletePage(pageId) {
-			const currentPageId = this.currentPage?.id
-
 			try {
-				await this.dispatchTrashPage({ pageId })
+				await this.trashPage({ pageId })
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'Could not delete the page'))
@@ -265,46 +239,12 @@ export default {
 			}
 
 			// Redirect to root page if currentPage got deleted
-			if (currentPageId === pageId) {
-				this.$router.push(`/${encodeURIComponent(this.currentCollective.name)}`)
+			if (this.currentPageId === pageId) {
+				await this.$router.push(`/${encodeURIComponent(this.currentCollective.name)}`)
 			}
 
 			emit('collectives:page-list:page-trashed')
 			showSuccess(t('collectives', 'Page deleted'))
-		},
-
-		/**
-		 * Delete pageId from subpageOrder of parent page (only in frontend store)
-		 *
-		 * @param {number} parentId ID of the parent page
-		 * @param {number} pageId ID of the page to remove
-		 */
-		subpageOrderDelete(parentId, pageId) {
-			const parentPage = this.pages.find(p => (p.id === parentId))
-			this.updateSubpageOrder({ parentId, subpageOrder: parentPage.subpageOrder.filter(id => (id !== pageId)) })
-		},
-
-		/**
-		 * Add pageId to subpageOrder of parent page at specified index (only in frontend store)
-		 * If no index is provided, add to the beginning of the list.
-		 *
-		 * Build subpageOrder of parent page to maintain the displayed order. If no subpageOrder
-		 * was stored before or it missed pages, pages would jump around otherwise.
-		 *
-		 * @param {number} parentId ID of the parent page
-		 * @param {number} pageId ID of the page to remove
-		 * @param {number} newIndex New index for pageId (prepend by default)
-		 */
-		async subpageOrderAdd(parentId, pageId, newIndex = 0) {
-			// Get current subpage order of parentId
-			const subpageOrder = this.sortedSubpages(parentId, 'byOrder')
-				.map(p => p.id)
-				.filter(id => (id !== pageId))
-
-			// Add pageId to index position
-			subpageOrder.splice(newIndex, 0, pageId)
-
-			this.updateSubpageOrder({ parentId, subpageOrder })
 		},
 
 		/**
@@ -319,12 +259,12 @@ export default {
 		 */
 		async subpageOrderUpdate(parentId, pageId, newIndex) {
 			const subpageOrder = this.sortedSubpages(parentId)
-				.map(p => p.id)
-			subpageOrder.splice(subpageOrder.findIndex(id => id === pageId), 1)
+				.map((p) => p.id)
+			subpageOrder.splice(subpageOrder.findIndex((id) => id === pageId), 1)
 			subpageOrder.splice(newIndex, 0, pageId)
 
 			try {
-				await this.dispatchSetPageSubpageOrder({
+				await this.setPageSubpageOrder({
 					pageId: parentId,
 					subpageOrder,
 				})

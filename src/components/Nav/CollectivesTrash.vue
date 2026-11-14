@@ -1,249 +1,373 @@
-<template>
-	<div id="collectives-trash"
-		v-click-outside="clickOutsideConfig"
-		:class="{ open }">
-		<div id="collectives-trash__header">
-			<NcButton type="tertiary" class="collectives-trash-button" @click="toggleTrash">
-				<template #icon>
-					<DeleteIcon class="collectives-trash-button__icon" :size="20" />
-				</template>
-				{{ t('collectives', 'Deleted collectives') }}
-			</NcButton>
-		</div>
-		<transition name="slide-up">
-			<div v-show="open" id="collectives-trash__content">
-				<ul class="app-navigation__list">
-					<NcAppNavigationItem v-for="collective in trashCollectives"
-						:key="collective.circleId"
-						:name="collective.name"
-						:force-menu="true"
-						:force-display-actions="isMobile"
-						class="collectives_trash_list_item">
-						<template #icon>
-							<template v-if="collective.emoji">
-								{{ collective.emoji }}
-							</template>
-							<template v-else>
-								<CollectivesIcon :size="20" />
-							</template>
-						</template>
-						<template #actions>
-							<NcActionButton :close-after-click="true" @click="restoreCollective(collective)">
-								<template #icon>
-									<RestoreIcon :size="20" />
-								</template>
-								{{ t('collectives', 'Restore') }}
-							</NcActionButton>
-							<NcActionButton :close-after-click="true" @click="showDeleteModal(collective)">
-								<template #icon>
-									<DeleteIcon :size="20" />
-								</template>
-								{{ t('collectives', 'Delete permanently') }}
-							</NcActionButton>
-						</template>
-					</NcAppNavigationItem>
-				</ul>
-			</div>
-		</transition>
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 
-		<NcModal v-if="deleteModal" size="small" @close="closeDeleteModal">
+<template>
+	<div id="collectives-trash">
+		<NcButton
+			ref="collectiveTrashButton"
+			variant="tertiary"
+			:aria-label="t('collectives', 'Deleted collectives')"
+			class="collectives-trash-button"
+			@click="openTrash">
+			<template #icon>
+				<DeleteIcon class="collectives-trash-button__icon" :size="20" />
+			</template>
+			{{ t('collectives', 'Deleted collectives') }}
+		</NcButton>
+		<NcDialog
+			v-model:open="showModal"
+			:name="t('collectives', 'Deleted collectives')"
+			closeOnClickOutside
+			class="dialog__collectives-trash"
+			size="large">
 			<div class="modal__content">
-				<h2>
-					{{ t('collectives', 'Permanently delete collective »{collective}«', { collective: modalCollective.name }) }}
-				</h2>
+				<NcEmptyContent v-if="loading('collectiveTrash')" :name="t('collectives', 'Loading…')">
+					<template #icon>
+						<NcLoadingIcon />
+					</template>
+				</NcEmptyContent>
+				<NcEmptyContent
+					v-else-if="!sortedTrashCollectives.length"
+					:description="t('collectives', 'No deleted collectives.')">
+					<template #icon>
+						<DeleteIcon :size="20" />
+					</template>
+				</NcEmptyContent>
+				<table v-else>
+					<thead>
+						<tr>
+							<th class="header-title">
+								{{ t('collectives', 'Name') }}
+							</th>
+							<th />
+							<th v-if="!isMobile" class="header-timestamp">
+								{{ t('collectives', 'Deleted') }}
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr v-for="collective in sortedTrashCollectives" :key="collective.id">
+							<td class="item">
+								<div class="item-icon">
+									<div v-if="collective.emoji">
+										{{ collective.emoji }}
+									</div>
+									<CollectivesIcon v-else :size="22" />
+								</div>
+								<div class="item-title">
+									{{ collective.name }}
+								</div>
+							</td>
+							<td class="actions">
+								<NcButton
+									:aria-label="t('collectives', 'Restore collective')"
+									:disabled="!networkOnline"
+									@click="restoreCollective(collective)">
+									<template #icon>
+										<RestoreIcon :size="20" />
+									</template>
+									{{ t('collectives', 'Restore') }}
+								</NcButton>
+								<NcActions forceMenu>
+									<NcActionButton
+										closeAfterClick
+										:disabled="!networkOnline"
+										@click="showDeleteModal(collective)">
+										<template #icon>
+											<DeleteIcon :size="20" />
+										</template>
+										{{ t('collectives', 'Delete permanently') }}
+									</NcActionButton>
+								</NcActions>
+							</td>
+							<td v-if="!isMobile" class="timestamp">
+								<span :title="titleDate(collective.trashTimestamp)">
+									{{ formattedDate(collective.trashTimestamp) }}
+								</span>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</NcDialog>
+
+		<NcDialog
+			v-if="deleteModal"
+			:name="t('collectives', 'Permanently delete collective {collective}', { collective: modalCollective.name })"
+			size="small"
+			@closing="closeDeleteModal">
+			<div class="modal__content">
 				<div>
 					{{ t('collectives', 'Delete corresponding team along with the collective?') }}
 				</div>
-				<div class="three_buttons">
-					<NcButton @click="closeDeleteModal">
-						{{ t('collectives', 'Cancel') }}
-					</NcButton>
-					<NcButton type="error" @click="deleteCollective(modalCollective, false)">
-						{{ t('collectives', 'Only collective') }}
-					</NcButton>
-					<NcButton v-if="isCollectiveOwner(modalCollective)"
-						type="error"
-						@click="deleteCollective(modalCollective, true)">
-						{{ t('collectives', 'Collective and team') }}
-					</NcButton>
-					<NcButton v-else
-						type="primary"
-						disabled
-						:title="t('collectives', 'Only team owners can delete a team')">
-						{{ t('collectives', 'Collective and team') }}
-					</NcButton>
-				</div>
 			</div>
-		</NcModal>
+			<template #actions>
+				<NcButton
+					variant="error"
+					:aria-label="t('collectives', 'Delete only collective')"
+					wide
+					@click="deleteCollective(modalCollective, false)">
+					{{ t('collectives', 'Only collective') }}
+				</NcButton>
+				<NcButton
+					v-if="isCollectiveOwner(modalCollective)"
+					variant="error"
+					:aria-label="t('collectives', 'Delete collective and team')"
+					wide
+					@click="deleteCollective(modalCollective, true)">
+					{{ t('collectives', 'Collective and team') }}
+				</NcButton>
+				<NcButton
+					v-else
+					variant="primary"
+					disabled
+					:title="t('collectives', 'Only team owners can delete a team')"
+					wide>
+					{{ t('collectives', 'Collective and team') }}
+				</NcButton>
+				<NcButton :aria-label="t('collectives', 'Cancel')" wide @click="closeDeleteModal">
+					{{ t('collectives', 'Cancel') }}
+				</NcButton>
+			</template>
+		</NcDialog>
 	</div>
 </template>
 
 <script>
-import { mapGetters, mapState } from 'vuex'
-import { NcActionButton, NcAppNavigationItem, NcButton, NcModal } from '@nextcloud/vue'
-import isMobile from '@nextcloud/vue/dist/Mixins/isMobile.js'
-import CollectivesIcon from '../Icon/CollectivesIcon.vue'
-import DeleteIcon from 'vue-material-design-icons/Delete.vue'
+import { subscribe, unsubscribe } from '@nextcloud/event-bus'
+import { t } from '@nextcloud/l10n'
+import moment from '@nextcloud/moment'
+import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+import { mapActions, mapState } from 'pinia'
+import NcActionButton from '@nextcloud/vue/components/NcActionButton'
+import NcActions from '@nextcloud/vue/components/NcActions'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import RestoreIcon from 'vue-material-design-icons/Restore.vue'
-import { directive as ClickOutside } from 'v-click-outside'
+import DeleteIcon from 'vue-material-design-icons/TrashCanOutline.vue'
+import CollectivesIcon from '../Icon/CollectivesIcon.vue'
+import { useCollectivesStore } from '../../stores/collectives.js'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'CollectivesTrash',
 
-	directives: {
-		ClickOutside,
-	},
-
 	components: {
+		NcActions,
 		NcActionButton,
-		NcAppNavigationItem,
 		NcButton,
 		CollectivesIcon,
 		DeleteIcon,
-		NcModal,
+		NcDialog,
+		NcEmptyContent,
+		NcLoadingIcon,
 		RestoreIcon,
 	},
 
-	mixins: [
-		isMobile,
+	props: {
+		networkOnline: {
+			type: Boolean,
+			required: true,
+		},
+	},
+
+	emits: [
+		'deleteCollective',
+		'restoreCollective',
+		'update:dialogOpen',
 	],
+
+	setup() {
+		const isMobile = useIsMobile()
+		return { isMobile }
+	},
 
 	data() {
 		return {
-			open: false,
+			showModal: false,
 			deleteModal: false,
 			modalCollective: null,
-			clickOutsideConfig: {
-				handler: this.closeTrash,
-			},
 		}
 	},
 
 	computed: {
-		...mapState({
-			trashCollectives: (state) => state.collectives.trashCollectives,
-		}),
-		...mapGetters([
+		...mapState(useRootStore, ['loading']),
+		...mapState(useCollectivesStore, [
 			'isCollectiveOwner',
+			'sortedTrashCollectives',
 		]),
+
+		titleDate() {
+			return (timestamp) => timestamp ? moment.unix(timestamp).format('LLL') : ''
+		},
+
+		formattedDate() {
+			return (timestamp) => timestamp ? moment.unix(timestamp).fromNow() : ''
+		},
+
+		dialogOpen() {
+			return this.showModal || this.deleteModal
+		},
+	},
+
+	watch: {
+		dialogOpen(value) {
+			// Parent popover needs to take the open state into account for closeOnClickOutide.
+			this.$emit('update:dialogOpen', value)
+		},
+	},
+
+	mounted() {
+		subscribe('collectives:navigation:collective-trashed', this.onCollectiveTrashed)
+		this.$highlightTimeoutId = null
+	},
+
+	unmounted() {
+		unsubscribe('collectives:navigation:collective-trashed', this.onCollectiveTrashed)
+		clearTimeout(this.$highlightTimeoutId)
 	},
 
 	methods: {
-		toggleTrash() {
-			this.open = !this.open
+		t,
+
+		...mapActions(useCollectivesStore, ['getTrashCollectives']),
+
+		openTrash() {
+			this.showModal = true
+			this.getTrashCollectives()
 		},
-		closeTrash() {
-			this.open = false
-		},
+
 		restoreCollective(collective) {
-			this.$emit('restore-collective', collective)
+			this.$emit('restoreCollective', collective)
 		},
+
 		deleteCollective(collective, circle) {
-			this.$emit('delete-collective', collective, circle)
+			this.$emit('deleteCollective', collective, circle)
 			this.closeDeleteModal()
 		},
+
 		showDeleteModal(collective) {
 			this.modalCollective = collective
 			this.deleteModal = true
 		},
+
 		closeDeleteModal() {
 			this.modalCollective = null
 			this.deleteModal = false
+		},
+
+		onCollectiveTrashed() {
+			if (this.$highlightTimeoutId) {
+				// clear former timeout and remove class to allow re-highlighting the button
+				clearTimeout(this.$highlightTimeoutId)
+				this.$refs.collectiveTrashButton?.$el.classList.remove('highlight-animation')
+			}
+			this.$nextTick(() => {
+				this.$refs.collectiveTrashButton?.$el.classList.add('highlight-animation')
+				this.$highlightTimeoutId = setTimeout(() => {
+					this.$refs.collectiveTrashButton?.$el.classList.remove('highlight-animation')
+					this.$highlightTimeoutId = null
+				}, 5000)
+			})
 		},
 	},
 }
 </script>
 
 <style lang="scss" scoped>
+@use '../../css/animation';
+
 #collectives-trash {
 	margin-top: auto;
-	padding: 3px;
+	padding: 0 2px 4px 4px;
 
-	&__header {
-		box-sizing: border-box;
-		margin: 0 3px 3px 3px;
-		padding-top: calc(var(--default-grid-baseline, 4px) * 2);
+	.collectives-trash-button {
+		width: calc(100% - 3px);
+		padding: 0;
 
-		.collectives-trash-button {
-			display: flex;
-			flex: 1 1 0;
-			height: 44px;
-			width: 100%;
-			padding: 0;
-			margin: 0;
-			background-color: var(--color-main-background);
-			box-shadow: none;
-			border: 0;
-			border-radius: var(--border-radius-pill);
-			// text-align: left;
-			// font-weight: normal;
-			// font-size: 100%;
-			color: var(--color-main-text);
-			padding-right: 14px;
-			line-height: 44px;
-
-			:deep(.button-vue__wrapper) {
-				width: 100%;
-				justify-content: start;
-			}
-
-			&:hover,
-			&:focus {
-				background-color: var(--color-background-hover);
-			}
-
-			&__icon {
-				width: 44px;
-				height: 44px;
-				min-width: 44px;
-			}
-
-			:deep(.button-vue__text) {
-				overflow: hidden;
-				white-space: nowrap;
-				text-overflow: ellipsis;
-				font-weight: normal;
-			}
+		&.highlight-animation {
+			animation: highlight-animation 5s 1;
 		}
-	}
 
-	&__content {
-		display: block;
-		padding: 10px;
-		/* Restrict height of trash an make scrollable */
-		max-height: 300px;
-		overflow-y: auto;
-		box-sizing: border-box;
-	}
+		:deep(.button-vue__wrapper) {
+			justify-content: start;
+		}
 
-	.slide-up-leave-active,
-	.slide-up-enter-active {
-		transition-duration: var(--animation-slow);
-		transition-property: max-height, padding;
-		overflow-y: hidden !important;
-	}
-
-	.slide-up-enter,
-	.slide-up-leave-to {
-		max-height: 0 !important;
-		padding: 0 10px !important;
-	}
-}
-
-:deep(.modal-wrapper--small) {
-	.modal-container {
-		width: 600px;
+		:deep(.button-vue__text) {
+			font-weight: normal;
+		}
 	}
 }
 
 .modal__content {
-	margin: 15px;
+	margin: calc(var(--default-grid-baseline) * 4);
 }
 
-.three_buttons {
+table {
+	width: 100%;
+}
+
+tr {
 	display: flex;
-	justify-content: space-between;
-	padding-top: 10px;
+	padding-block: var(--default-grid-baseline);
+
+	&:not(:last-child) {
+		border-bottom: 1px solid var(--color-border);
+	}
+}
+
+th, td {
+	display: flex;
+	height: var(--default-clickable-area);
+	align-items: center;
+	margin: 0 14px;
+	padding: 2px 0;
+}
+
+th {
+	color: var(--color-text-maxcontrast);
+
+	&.header-title {
+		padding-left: var(--default-clickable-area);
+		flex: 1 1 auto;
+	}
+
+	&.header-timestamp {
+		width: 110px;
+	}
+}
+
+td {
+	&.item {
+		flex: 1 1 auto;
+
+		.item-icon {
+			display: flex;
+			justify-content: center;
+			width: var(--default-clickable-area);
+		}
+
+		.item-title {
+			white-space: normal;
+		}
+	}
+
+	&.actions {
+		gap: 4px;
+	}
+
+	&.timestamp {
+		width: 110px;
+	}
+}
+
+:deep(.dialog__actions) {
+	display: flex;
+	flex-flow: column nowrap;
 	gap: 10px;
 }
 </style>

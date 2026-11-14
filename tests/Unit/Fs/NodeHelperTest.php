@@ -1,14 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Fs;
 
-use OC\Files\Node\File;
-use OC\Files\Node\Folder;
 use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Service\NotFoundException;
+use OCP\Files\File;
+use OCP\Files\Folder;
 use OCP\IDBConnection;
 use OCP\IL10N;
-use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+use Test\TestCase;
 
 class NodeHelperTest extends TestCase {
 	private IL10N $l10n;
@@ -23,8 +31,11 @@ class NodeHelperTest extends TestCase {
 		$this->l10n = $this->getMockBuilder(IL10N::class)
 			->disableOriginalConstructor()
 			->getMock();
+		$logger = $this->getMockBuilder(LoggerInterface::class)
+			->disableOriginalConstructor()
+			->getMock();
 
-		$this->helper = new NodeHelper($db, $this->l10n);
+		$this->helper = new NodeHelper($db, $this->l10n, $logger);
 	}
 
 	public function nameProvider(): array {
@@ -62,10 +73,10 @@ class NodeHelperTest extends TestCase {
 		$folder = $this->getMockBuilder(Folder::class)
 			->disableOriginalConstructor()
 			->getMock();
-		$folder->method('getById')
+		$folder->method('getFirstNodeById')
 			->willReturnMap([
-				[1, [$file]],
-				[2, []],
+				[1, $file],
+				[2, null],
 			]);
 
 		self::assertEquals($file, $this->helper->getFileById($folder, 1));

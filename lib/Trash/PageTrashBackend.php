@@ -2,12 +2,18 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Trash;
 
 use Exception;
 use LogicException;
 use OC\Files\Storage\Wrapper\Jail;
 use OCA\Collectives\Db\CollectiveMapper;
+use OCA\Collectives\Db\PageLinkMapper;
 use OCA\Collectives\Db\PageMapper;
 use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Model\PageInfo;
@@ -28,18 +34,26 @@ use OCP\Files\NotFoundException;
 use OCP\Files\NotPermittedException;
 use OCP\Files\Storage\IStorage;
 use OCP\IUser;
+use OCP\IUserManager;
+use OCP\IUserSession;
+use OCP\Util;
 use Psr\Log\LoggerInterface;
 
 class PageTrashBackend implements ITrashBackend {
 	private ?Folder $appFolder = null;
 	private ?VersionsBackend $versionsBackend = null;
 
-	public function __construct(private CollectiveFolderManager $collectiveFolderManager,
-		private PageTrashManager $trashManager,
-		private MountProvider $mountProvider,
-		private CollectiveMapper $collectiveMapper,
-		private PageMapper $pageMapper,
-		private LoggerInterface $logger) {
+	public function __construct(
+		private readonly CollectiveFolderManager $collectiveFolderManager,
+		private readonly PageTrashManager $trashManager,
+		private readonly MountProvider $mountProvider,
+		private readonly CollectiveMapper $collectiveMapper,
+		private readonly PageMapper $pageMapper,
+		private readonly PageLinkMapper $pageLinkMapper,
+		private readonly LoggerInterface $logger,
+		private readonly IUserManager $userManager,
+		private readonly IUserSession $userSession,
+	) {
 	}
 
 	private function getAppFolder(): Folder {
@@ -62,28 +76,37 @@ class PageTrashBackend implements ITrashBackend {
 		return $this->getTrashForFolders($user, $folders);
 	}
 
+	public function getTrashRootItem(IUser $user, string $name): ?ITrashItem {
+		$folders = $this->mountProvider->getFoldersForUser($user);
+
+		return $this->getTrashItemForFolders($user, $folders, $name);
+	}
+
 	/**
 	 * @throws NotFoundException
 	 * @throws NotPermittedException
 	 */
-	public function listTrashFolder(ITrashItem $trashItem): array {
-		if (!$trashItem instanceof CollectivePageTrashItem) {
+	public function listTrashFolder(ITrashItem $folder): array {
+		if (!$folder instanceof CollectivePageTrashItem) {
 			return [];
 		}
-		$user = $trashItem->getUser();
-		$folder = $this->getNodeForTrashItem($user, $trashItem);
-		if (!$folder instanceof Folder) {
+
+		$user = $folder->getUser();
+		$folderNode = $this->getNodeForTrashItem($user, $folder);
+		if (!$folderNode instanceof Folder) {
 			return [];
 		}
-		$content = $folder->getDirectoryListing();
+
+		$content = $folderNode->getDirectoryListing();
 		return array_map(fn (Node $node) => new CollectivePageTrashItem(
 			$this,
-			$trashItem->getOriginalLocation() . '/' . $node->getName(),
-			$trashItem->getDeletedTime(),
-			$trashItem->getTrashPath() . '/' . $node->getName(),
+			$folder->getOriginalLocation() . '/' . $node->getName(),
+			$folder->getDeletedTime(),
+			$folder->getTrashPath() . '/' . $node->getName(),
 			$node,
 			$user,
-			$trashItem->getCollectiveMountPoint()
+			$folder->getDeletedBy(),
+			$folder->getCollectiveMountPoint()
 		), $content);
 	}
 
@@ -111,32 +134,17 @@ class PageTrashBackend implements ITrashBackend {
 		if ($parent === '.') {
 			$parent = '';
 		}
+
 		if ($parent !== '' && !$targetFolder->nodeExists($parent)) {
 			$originalLocation = basename($originalLocation);
 		}
 
 		if ($targetFolder->nodeExists($originalLocation)) {
-			$info = pathinfo($originalLocation);
+			$location = $originalLocation;
 			$i = 1;
 
-			$gen = static function ($info, int $i): string {
-				$target = $info['dirname'];
-				if ($target === '.') {
-					$target = '';
-				}
-
-				$target .= $info['filename'];
-				$target .= ' (' . $i . ')';
-
-				if (isset($info['extension'])) {
-					$target .= $info['extension'];
-				}
-
-				return $target;
-			};
-
 			do {
-				$originalLocation = $gen($info, $i);
+				$originalLocation = self::numberedLocation($location, $i);
 				$i++;
 			} while ($targetFolder->nodeExists($originalLocation));
 		}
@@ -166,6 +174,28 @@ class PageTrashBackend implements ITrashBackend {
 		if (null !== $attachmentsFolderItem = $this->findAttachmentFolderItem($user, $collectiveId, $item)) {
 			$this->restoreItem($attachmentsFolderItem);
 		}
+
+		Util::emitHook(
+			'\OCA\Files_Trashbin\Trashbin',
+			'post_restore',
+			[
+				'filePath' => '/' . $item->getCollectiveMountPoint() . '/' . $originalLocation,
+				'trashPath' => $item->getPath(),
+			],
+		);
+	}
+
+	/**
+	 * Location with a number appended to the filename, e.g. `Page/a (1).png` for `Page/a.png`
+	 */
+	private static function numberedLocation(string $location, int $i): string {
+		$info = pathinfo($location);
+		$target = $info['dirname'] === '.' ? '' : $info['dirname'] . '/';
+		$target .= $info['filename'] . ' (' . $i . ')';
+		if (isset($info['extension'])) {
+			$target .= '.' . $info['extension'];
+		}
+		return $target;
 	}
 
 	/**
@@ -210,6 +240,7 @@ class PageTrashBackend implements ITrashBackend {
 
 		// Delete page from collective page database
 		if ($deletePageId) {
+			$this->pageLinkMapper->deleteByPageId($deletePageId);
 			$this->pageMapper->deleteByFileId($deletePageId);
 		}
 
@@ -223,7 +254,7 @@ class PageTrashBackend implements ITrashBackend {
 	 * @throws NotPermittedException
 	 */
 	private function findAttachmentFolderItem(IUser $user, int $collectiveId, CollectivePageTrashItem $item): ?TrashItem {
-		$attachmentsPrefix = ".attachments.";
+		$attachmentsPrefix = '.attachments.';
 		if (str_starts_with($item->getName(), $attachmentsPrefix)) {
 			// Passed item is already an attachment folder
 			return null;
@@ -240,7 +271,7 @@ class PageTrashBackend implements ITrashBackend {
 					return $attachmentsItem;
 				}
 				break;
-			} catch (NotFoundException | InvalidPathException) {
+			} catch (NotFoundException|InvalidPathException) {
 			}
 		}
 
@@ -253,9 +284,11 @@ class PageTrashBackend implements ITrashBackend {
 	 */
 	public function moveToTrash(IStorage $storage, string $internalPath): bool {
 		if ($storage->instanceOfStorage(CollectiveStorage::class) && $storage->isDeletable($internalPath)) {
+			/** @var CollectiveStorage $storage */
 			$name = basename($internalPath);
 			$fileEntry = $storage->getCache()->get($internalPath);
 			$collectiveId = $storage->getFolderId();
+
 			$trashFolder = $this->getTrashFolder($collectiveId);
 			$trashStorage = $trashFolder->getStorage();
 			$time = time();
@@ -275,7 +308,8 @@ class PageTrashBackend implements ITrashBackend {
 			}
 
 			if ($trashStorage->moveFromStorage($unJailedStorage, $unJailedInternalPath, $targetInternalPath)) {
-				$this->trashManager->addTrashItem($collectiveId, $name, $time, $internalPath, $fileEntry->getId());
+				$deletedBy = $this->userSession->getUser()?->getUID() ?? '';
+				$this->trashManager->addTrashItem($collectiveId, $name, $time, $internalPath, $fileEntry->getId(), $deletedBy);
 				if ($trashStorage->getCache()->getId($targetInternalPath) !== $fileEntry->getId()) {
 					$trashStorage->getCache()->moveFromCache($unJailedStorage->getCache(), $unJailedInternalPath, $targetInternalPath);
 				}
@@ -368,6 +402,7 @@ class PageTrashBackend implements ITrashBackend {
 	/**
 	 * @throws NotPermittedException
 	 * @throws NotFoundException
+	 * @return list<CollectivePageTrashItem>
 	 */
 	private function getTrashForFolders(IUser $user, array $folders): array {
 		$collectiveIds = array_map(static fn (array $folder): int => $folder['folder_id'], $folders);
@@ -377,6 +412,7 @@ class PageTrashBackend implements ITrashBackend {
 			$key = $row['collective_id'] . '/' . $row['name'] . '/' . $row['deleted_time'];
 			$indexedRows[$key] = $row;
 		}
+
 		$items = [];
 		foreach ($folders as $folder) {
 			$collectiveId = $folder['folder_id'];
@@ -393,6 +429,7 @@ class PageTrashBackend implements ITrashBackend {
 				$name = $pathParts['filename'];
 				$key = $collectiveId . '/' . $name . '/' . $timestamp;
 				$originalLocation = isset($indexedRows[$key]) ? $indexedRows[$key]['original_location'] : '';
+				$deletedBy = isset($indexedRows[$key]) ? $indexedRows[$key]['deleted_by'] : '';
 
 				if (method_exists($item, 'getFileInfo') && null !== $info = $item->getFileInfo()) {
 					$info['name'] = $name;
@@ -403,12 +440,65 @@ class PageTrashBackend implements ITrashBackend {
 						'/' . $collectiveId . '/' . $item->getName(),
 						$info,
 						$user,
-						$mountPoint
+						$this->userManager->get($deletedBy),
+						$mountPoint,
 					);
 				}
 			}
 		}
 		return $items;
+	}
+
+	/**
+	 * @throws NotPermittedException
+	 * @throws NotFoundException
+	 */
+	private function getTrashItemForFolders(IUser $user, array $folders, $name): ?ITrashItem {
+		$collectiveIds = array_map(static fn (array $folder): int => $folder['folder_id'], $folders);
+		$rows = $this->trashManager->listTrashForCollectives($collectiveIds);
+		$indexedRows = [];
+		foreach ($rows as $row) {
+			$key = $row['collective_id'] . '/' . $row['name'] . '/' . $row['deleted_time'];
+			$indexedRows[$key] = $row;
+		}
+
+		$items = [];
+		foreach ($folders as $folder) {
+			$collectiveId = $folder['folder_id'];
+			if (!$this->userHasAccessToFolder($user, (int)$collectiveId)) {
+				continue;
+			}
+
+			$mountPoint = $folder['mount_point'];
+			$trashFolder = $this->getTrashFolder($collectiveId);
+			try {
+				$item = $trashFolder->get($name);
+			} catch (NotFoundException) {
+				continue;
+			}
+
+			$pathParts = pathinfo($item->getName());
+			$timestamp = (int)substr($pathParts['extension'], 1);
+			$name = $pathParts['filename'];
+			$key = $collectiveId . '/' . $name . '/' . $timestamp;
+			$originalLocation = isset($indexedRows[$key]) ? $indexedRows[$key]['original_location'] : '';
+			$deletedBy = isset($indexedRows[$key]) ? $indexedRows[$key]['deleted_by'] : '';
+
+			if (method_exists($item, 'getFileInfo') && null !== $info = $item->getFileInfo()) {
+				$info['name'] = $name;
+				return new CollectivePageTrashItem(
+					$this,
+					$originalLocation,
+					$timestamp,
+					'/' . $collectiveId . '/' . $item->getName(),
+					$info,
+					$user,
+					$this->userManager->get($deletedBy),
+					$mountPoint,
+				);
+			}
+		}
+		return null;
 	}
 
 	public function getTrashNodeById(IUser $user, int $fileId): ?Node {
@@ -448,6 +538,12 @@ class PageTrashBackend implements ITrashBackend {
 			// Build the TrashItem object
 			$trashFolder = $this->getTrashFolder($collectiveId);
 			$trashNode = $this->getTrashNodeById($user, $fileId);
+
+			// Ensure the resolved node belongs to the requested trash
+			if ($trashNode === null || !str_starts_with($trashNode->getPath(), $trashFolder->getPath() . '/')) {
+				return null;
+			}
+
 			// Get parent folder for index pages
 			if ($trashNode instanceof File && NodeHelper::isIndexPage($trashNode)) {
 				// The extra `get()` is required to resolve the lazy folder from getParent()
@@ -469,6 +565,7 @@ class PageTrashBackend implements ITrashBackend {
 					'/' . $collectiveId . '/' . $trashNode->getName(),
 					$info,
 					$user,
+					null,
 					$trashFolder->getMountPoint()->getMountPoint(),
 				);
 			}
@@ -551,7 +648,7 @@ class PageTrashBackend implements ITrashBackend {
 
 					$node = $nodes[$nodeName];
 					if ($node->getStorage()->unlink($node->getInternalPath()) === false) {
-						$this->logger->error("Failed to remove item from trashbin: " . $node->getPath());
+						$this->logger->error('Failed to remove item from trashbin: ' . $node->getPath());
 						continue;
 					}
 					// only count up after checking if removal is possible

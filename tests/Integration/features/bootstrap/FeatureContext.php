@@ -1,5 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 use Behat\Behat\Context\Context;
 use Behat\Gherkin\Node\TableNode;
 use GuzzleHttp\Client;
@@ -13,13 +20,16 @@ use Psr\Http\Message\ResponseInterface;
  * Defines application features from the specific context.
  */
 class FeatureContext implements Context {
-	private array $clientOptions;
+	private readonly array $clientOptions;
 	private ?ResponseInterface $response = null;
 	private ?array $json = null;
 	private ?string $currentUser = null;
+	private ?string $nextcloudVersion = null;
 	private array $cookieJars = [];
 	private array $requestTokens = [];
 	private array $store = [];
+	private ?int $deletedAttachmentId = null;
+	private bool $setXdebugSession = false;
 
 	private const CIRCLE_MEMBER_LEVEL = [
 		1 => 'Member',
@@ -33,28 +43,36 @@ class FeatureContext implements Context {
 		1 => 'edit',
 	];
 
+	private const API_URL = '/apps/collectives/api/v1.0/';
+
 	/**
 	 * Initializes context.
 	 * Every scenario gets its own context instance.
 	 * You can also pass arbitrary arguments to the
-	 * context constructor through behat.yml.
+	 * context constructor through behat.php.
 	 */
-	public function __construct(private string $baseUrl, private string $remoteUrl, private string $ocsUrl) {
+	public function __construct(
+		private readonly string $baseUrl,
+		private readonly string $ocsUrl,
+		public string $publicUrl,
+		private readonly string $remoteUrl,
+		private readonly string $occPath = 'php ../../occ',
+	) {
 		$this->clientOptions = ['verify' => false];
 	}
 
 	/**
-	 * @When user :user creates collective :collective
-	 * @When user :user :fails to create collective :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user creates collective :collective')]
+	#[\Behat\Step\When('user :user :fails to create collective :collective')]
 	public function userCreatesCollective(string $user, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$formData = new TableNode([['name', $collective]]);
-		$this->sendRequest('POST', '/apps/collectives/_api', $formData);
-		if ($fail === "fails") {
-			$this->assertStatusCode(422);
+		$this->sendOcsCollectivesRequest('POST', 'collectives', $formData);
+		if ($fail === 'fails') {
+			$this->assertStatusCode($user === 'guest' ? 403 : 400);
 		} else {
 			$this->assertStatusCode(200);
 			$this->assertCollectiveLevel($collective, 9);
@@ -62,10 +80,9 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user sets :type level in collective :collective to :level
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets :type level in collective :collective to :level')]
 	public function userUpdatesCollectivePermissionLevel(string $user, string $type, string $collective, string $level): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -76,19 +93,19 @@ class FeatureContext implements Context {
 		}
 
 		$formData = new TableNode([['level', $intLevel]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/' . $type . 'Level', $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/' . $type . 'Level', $formData);
 		$this->assertStatusCode(200);
 
-		$this->sendRequest('GET', '/apps/collectives/_api');
-		$this->assertCollectiveKeyValue($collective, $type . 'PermissionLevel', $intLevel);
+		$this->sendOcsCollectivesRequest('GET', 'collectives');
+		$this->assertCollectiveKeyValue($collective, $type . 'PermissionLevel', (string)$intLevel);
 	}
 
 	/**
-	 * @When user :user sets pageMode for collective :collective to :mode
-	 * @When user :user :fails to set pageMode for collective :collective to :mode
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets pageMode for collective :collective to :mode')]
+	#[\Behat\Step\When('user :user :fails to set pageMode for collective :collective to :mode')]
 	public function userUpdatesCollectivePageMode(string $user, string $collective, string $mode, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -99,33 +116,33 @@ class FeatureContext implements Context {
 		}
 
 		$formData = new TableNode([['mode', $intMode]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/pageMode', $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pageMode', $formData);
 
-		if ($fail === "fails") {
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
 
-			$this->sendRequest('GET', '/apps/collectives/_api');
-			$this->assertCollectiveKeyValue($collective, 'pageMode', $intMode);
+			$this->sendOcsCollectivesRequest('GET', 'collectives');
+			$this->assertCollectiveKeyValue($collective, 'pageMode', (string)$intMode);
 		}
 	}
 
 	/**
-	 * @When user :user creates page :page with parentPath :parentPath in :collective
-	 * @When user :user :fails to create page :page with parentPath :parentPath in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user creates page :page with parentPath :parentPath in :collective')]
+	#[\Behat\Step\When('user :user :fails to create page :page with parentPath :parentPath in :collective')]
 	public function userCreatesPage(string $user, string $page, string $parentPath, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 
 		$formData = new TableNode([['title', $page]]);
-		$this->sendRequest('POST', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $parentId, $formData);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/' . $parentId, $formData);
 
-		if ($fail === "fails") {
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -133,32 +150,89 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @Then user :user sees collective :collective
-	 * @Then user :user sees collective :collective in :trash
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user creates page :page with parentPath :parentPath from template :template in :collective')]
+	#[\Behat\Step\When('user :user :fails to create page :page with parentPath :parentPath from template :template in :collective')]
+	public function userCreatesFromTemplate(string $user, string $page, string $parentPath, string $template, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$parentId = $this->getParentId($collectiveId, $parentPath);
+		$templateId = $this->templateIdByName($collectiveId, $template);
+
+		$formData = new TableNode([['title', $page], ['templateId', $templateId]]);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/' . $parentId, $formData);
+
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user fails to create page :page with parentPath :parentPath using page :sourcePage as template in :collective')]
+	public function userFailsToCreateFromNonTemplate(string $user, string $page, string $parentPath, string $sourcePage, string $collective): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$parentId = $this->getParentId($collectiveId, $parentPath);
+		$sourcePageId = $this->pageIdByName($collectiveId, $sourcePage);
+
+		$formData = new TableNode([['title', $page], ['templateId', $sourcePageId]]);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/' . $parentId, $formData);
+		$this->assertStatusCode(404);
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user creates template :template in :collective')]
+	#[\Behat\Step\When('user :user :fails to create template :template in :collective')]
+	public function userCreatesTemplate(string $user, string $page, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+
+		$formData = new TableNode([['title', $page], ['parentId', 0]]);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/templates/0', $formData);
+
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\Then('user :user sees collective :collective')]
+	#[\Behat\Step\Then('user :user sees collective :collective in :trash')]
 	public function userSeesCollective(string $user, string $collective, ?string $trash = null): void {
 		$this->setCurrentUser($user);
 		if ($trash) {
-			$this->sendRequest('GET', '/apps/collectives/_api/trash');
+			$this->sendOcsCollectivesRequest('GET', 'collectives/trash');
 		} else {
-			$this->sendRequest('GET', '/apps/collectives/_api');
+			$this->sendOcsCollectivesRequest('GET', 'collectives');
 		}
 		$this->assertStatusCode(200);
 		$this->assertCollectiveByName($collective);
 	}
 
 	/**
-	 * @Then user :user sees pagePath :pagePath in :collective
-	 * @Then user :user :fails to see pagePath :pagePath in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\Then('user :user sees pagePath :pagePath in :collective')]
+	#[\Behat\Step\Then('user :user :fails to see pagePath :pagePath in :collective')]
 	public function userSeesPagePath(string $user, string $pagePath, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages');
 		$this->assertStatusCode(200);
 		if ($fail === 'fails') {
 			$this->assertPageByPath($pagePath, true);
@@ -168,69 +242,99 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @Then user :user doesn't see collective :collective
-	 * @Then user :user doesn't see collective :collective in :trash
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\Then('user :user sees templateName :templateName in :collective')]
+	#[\Behat\Step\Then('user :user :fails to see templateName :templateName in :collective')]
+	public function userSeesTemplatePath(string $user, string $templateName, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$hasTemplateId = $this->expectTemplateId($collectiveId, $templateName);
+		if ($fail === 'fails') {
+			Assert::assertFalse($hasTemplateId);
+		} else {
+			Assert::assertTrue($hasTemplateId);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\Then('user :user doesn\'t see collective :collective')]
+	#[\Behat\Step\Then('user :user doesn\'t see collective :collective in :trash')]
 	public function userDoesntSeeCollective(string $user, string $collective, ?string $trash = null): void {
 		$this->setCurrentUser($user);
 		if ($trash) {
-			$this->sendRequest('GET', '/apps/collectives/_api/trash');
+			$this->sendOcsCollectivesRequest('GET', 'collectives/trash');
 		} else {
-			$this->sendRequest('GET', '/apps/collectives/_api');
+			$this->sendOcsCollectivesRequest('GET', 'collectives');
 		}
 		$this->assertStatusCode(200);
 		$this->assertCollectiveByName($collective, true);
 	}
 
 	/**
-	 * @Then user :user doesn't see pagePath :pagePath in :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\Then('user :user doesn\'t see pagePath :pagePath in :collective')]
 	public function userDoesntSeePagePath(string $user, string $pagePath, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages');
 		$this->assertStatusCode(200);
 		$this->assertPageByPath($pagePath, true);
 	}
 
 	/**
-	 * @Then user :user sees attachment :name with mimetype :mimetype for :page in :collective
 	 *
 	 * @throws GuzzleException
 	 */
-	public function userSeesAttachments(string $user, string $name, string $mimetype, string $page, string $collective): void {
+	#[\Behat\Step\Then('user :user sees attachment :name with mimetype :mimetype for :page in :collective')]
+	#[\Behat\Step\Then('user :user :fails to see attachment :name with mimetype :mimetype for :page in :collective')]
+	public function userSeesAttachment(string $user, string $name, ?string $mimetype, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/attachments');
-		$this->assertStatusCode(200);
-		$this->assertAttachment($name, $mimetype);
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments');
+		if ($fail === 'fails') {
+			$this->assertStatusCode(200);
+			$this->assertAttachment($name, $mimetype, 'text', true);
+		} else {
+			$this->assertStatusCode(200);
+			$this->assertAttachment($name, $mimetype);
+		}
 	}
 
 	/**
-	 * @Then user :user last edited page :page in :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\Then('user :user last edited page :page in :collective')]
 	public function userLastEditedPage(string $user, string $page, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages');
 		$this->assertStatusCode(200);
 		$this->assertPageLastEditedByUser($page, $user);
 	}
 
 	/**
-	 * @When user :user trashes collective :collective
-	 * @When user :user :fails to trash collective :collective
-	 * @When user :user :fails to trash foreign collective :collective with member :member
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user trashes and deletes collective :collective')]
+	public function userTrashesAndDeletesCollectiveAndTeam(string $user, string $collective): void {
+		$this->userTrashesCollective($user, $collective);
+		$this->userDeletesCollectiveAndTeam($user, $collective);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user trashes collective :collective')]
+	#[\Behat\Step\When('user :user :fails to trash collective :collective')]
+	#[\Behat\Step\When('user :user :fails to trash foreign collective :collective with member :member')]
 	public function userTrashesCollective(string $user, string $collective, ?string $fail = null, ?string $member = null): void {
 		$this->setCurrentUser($member ?: $user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -238,8 +342,8 @@ class FeatureContext implements Context {
 			throw new RuntimeException('Could not get collectiveId for ' . $collective);
 		}
 		$this->setCurrentUser($user);
-		$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId);
+		if ($fail === 'fails') {
 			$this->assertStatusCode($member ? 404 : 403);
 		} else {
 			$this->assertStatusCode(200);
@@ -248,12 +352,12 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user deletes collective :collective
-	 * @When user :user :fails to delete collective :collective
-	 * @When user :user :fails to delete collective :collective with admin :admin
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes collective :collective')]
+	#[\Behat\Step\When('user :user :fails to delete collective :collective')]
+	#[\Behat\Step\When('user :user :fails to delete collective :collective with admin :admin')]
 	public function userDeletesCollective(string $user, string $collective, ?string $fail = null, ?string $admin = null): void {
 		$this->setCurrentUser($admin ?: $user);
 		$collectiveId = $this->collectiveIdByName($collective, true);
@@ -262,8 +366,8 @@ class FeatureContext implements Context {
 		}
 		$this->setCurrentUser($user);
 
-		$this->sendRequest('DELETE', '/apps/collectives/_api/trash/' . $collectiveId);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/trash/' . $collectiveId);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(404);
 		} else {
 			$this->assertStatusCode(200);
@@ -272,13 +376,13 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user deletes collective+team :collective
-	 * @When user :user :fails to delete collective+team :collective
-	 * @When user :user :fails to delete collective+team :collective with admin :admin
-	 * @When user :user :fails to delete :selfadmin collective+team :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes collective+team :collective')]
+	#[\Behat\Step\When('user :user :fails to delete collective+team :collective')]
+	#[\Behat\Step\When('user :user :fails to delete collective+team :collective with admin :admin')]
+	#[\Behat\Step\When('user :user :fails to delete :selfadmin collective+team :collective')]
 	public function userDeletesCollectiveAndTeam(string $user, string $collective, ?string $fail = null, ?string $admin = null, ?string $selfadmin = null): void {
 		$this->setCurrentUser($admin ?: $user);
 		$collectiveId = $this->collectiveIdByName($collective, true);
@@ -286,8 +390,8 @@ class FeatureContext implements Context {
 			throw new RuntimeException('Could not get collectiveId for ' . $collective);
 		}
 		$this->setCurrentUser($user);
-		$this->sendRequest('DELETE', '/apps/collectives/_api/trash/' . $collectiveId . '?circle=1');
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/trash/' . $collectiveId . '?circle=1');
+		if ($fail === 'fails') {
 			$this->assertStatusCode($selfadmin ? 403 : 404);
 		} else {
 			$this->assertStatusCode(200);
@@ -296,19 +400,19 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user restores collective :collective
-	 * @When user :user :fails to restore collective :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user restores collective :collective')]
+	#[\Behat\Step\When('user :user :fails to restore collective :collective')]
 	public function userRestoresCollective(string $user, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective, true);
 		if ($collectiveId === null) {
 			throw new RuntimeException('Could not get collectiveId for ' . $collective);
 		}
-		$this->sendRequest('PATCH', '/apps/collectives/_api/trash/' . $collectiveId);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PATCH', 'collectives/trash/' . $collectiveId);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(404);
 		} else {
 			$this->assertStatusCode(200);
@@ -317,13 +421,12 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user collective :collective property :property is :value
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user collective :collective property :property is :value')]
 	public function userCollectiveProperty(string $user, string $collective, string $property, string $value): void {
 		$this->setCurrentUser($user);
-		$this->sendRequest('GET', '/apps/collectives/_api');
+		$this->sendOcsCollectivesRequest('GET', 'collectives');
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to get list of collectives');
 		}
@@ -331,15 +434,14 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user sets userSetting :userSetting for collective :collective to :value
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets userSetting :userSetting for collective :collective to :value')]
 	public function userSetsCollectiveUserSetting(string $user, string $userSetting, string $collective, string $value): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$formData = new TableNode([[$userSetting, $value]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_userSettings/' . $userSetting, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/userSettings/' . $userSetting, $formData);
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to set userSetting for collective');
 		}
@@ -348,17 +450,17 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user trashes page :page in :collective
-	 * @When user :user :fails to trash page :page in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user trashes page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to trash page :page in :collective')]
 	public function userTrashesPage(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/' . $pageId);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -366,55 +468,67 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user restores page :page from trash in :collective
-	 * @When user :user :fails to restore page :page from trash in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user restores page :page from trash in :collective')]
+	#[\Behat\Step\When('user :user :fails to restore page :page from trash in :collective')]
 	public function userRestoresPage(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		if ($fail === "fails") {
-			$this->sendRequest('PATCH', '/apps/collectives/_api/' . $collectiveId . '/_pages/trash/' . 1);
+		if ($fail === 'fails') {
+			$this->sendOcsCollectivesRequest('PATCH', 'collectives/' . $collectiveId . '/pages/trash/' . 1);
 			$this->assertStatusCode(403);
 		} else {
 			$pageId = $this->trashedPageIdByName($collectiveId, $page);
-			$this->sendRequest('PATCH', '/apps/collectives/_api/' . $collectiveId . '/_pages/trash/' . $pageId);
+			$this->sendOcsCollectivesRequest('PATCH', 'collectives/' . $collectiveId . '/pages/trash/' . $pageId);
 			$this->assertStatusCode(200);
 		}
 	}
 
 	/**
-	 * @When user :user deletes page :page from trash in :collective
-	 * @When user :user :fails to delete page :page from trash in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes page :page from trash in :collective')]
+	#[\Behat\Step\When('user :user :fails to delete page :page from trash in :collective')]
 	public function userDeletesPage(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		if ($fail === "fails") {
-			$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId . '/_pages/trash/' . 1);
+		if ($fail === 'fails') {
+			$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/trash/' . 1);
 			$this->assertStatusCode(403);
 		} else {
 			$pageId = $this->trashedPageIdByName($collectiveId, $page);
-			$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId . '/_pages/trash/' . $pageId);
+			$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/trash/' . $pageId);
 			$this->assertStatusCode(200);
 		}
 	}
 
 	/**
-	 * @When user :user touches page :page in :collective
-	 * @When user :user :fails to touch page :page in :collective
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user deletes template :template from :collective')]
+	public function userDeletesTemplate(string $user, string $template, string $collective): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$templateId = $this->templateIdByName($collectiveId, $template);
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/templates/' . $templateId);
+		$this->assertStatusCode(200);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user touches page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to touch page :page in :collective')]
 	public function userTouchesPage(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/touch');
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/touch');
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -422,19 +536,19 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user moves page :page to :newtitle with parentPath :parentPath in :collective
-	 * @When user :user :fails to move page :page to :newtitle with parentPath :parentPath in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user moves page :page to :newtitle with parentPath :parentPath in :collective')]
+	#[\Behat\Step\When('user :user :fails to move page :page to :newtitle with parentPath :parentPath in :collective')]
 	public function userMovesPage(string $user, string $page, string $newtitle, string $parentPath, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 		$formData = new TableNode([['parentId', $parentId], ['title', $newtitle]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId, $formData);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId, $formData);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -442,11 +556,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user copies page :page to :newtitle with parentPath :parentPath in :collective
-	 * @When user :user :fails to copy page :page to :newtitle with parentPath :parentPath in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user copies page :page to :newtitle with parentPath :parentPath in :collective')]
+	#[\Behat\Step\When('user :user :fails to copy page :page to :newtitle with parentPath :parentPath in :collective')]
 	public function userCopiesPage(string $user, string $page, string $newtitle, string $parentPath, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -457,8 +571,8 @@ class FeatureContext implements Context {
 			['title', $newtitle],
 			['copy', true],
 		]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId, $formData);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId, $formData);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -466,11 +580,26 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user moves page :page from collective :oldCollectiveId to collective :newCollectiveId
-	 * @When user :user moves page :page from collective :oldCollectiveId to collective :newCollectiveId with parentPath :parentPath
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user renames template :template to :newtitle in :collective')]
+	public function userRenamesTemplate(string $user, string $template, string $newtitle, string $collective): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$templateId = $this->templateIdByName($collectiveId, $template);
+		$formData = new TableNode([
+			['title', $newtitle],
+		]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/templates/' . $templateId, $formData);
+		$this->assertStatusCode(200);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user moves page :page from collective :oldCollectiveId to collective :newCollectiveId')]
+	#[\Behat\Step\When('user :user moves page :page from collective :oldCollectiveId to collective :newCollectiveId with parentPath :parentPath')]
 	public function userMovesPageToCollective(string $user, string $page, string $oldCollective, string $newCollective, ?string $parentPath = null): void {
 		$this->setCurrentUser($user);
 		$oldCollectiveId = $this->collectiveIdByName($oldCollective);
@@ -482,16 +611,16 @@ class FeatureContext implements Context {
 		} else {
 			$formData = null;
 		}
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $oldCollectiveId . '/_pages/' . $pageId . '/to/' . $newCollectiveId, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $oldCollectiveId . '/pages/' . $pageId . '/to/' . $newCollectiveId, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user copies page :page from collective :oldCollectiveId to collective :newCollectiveId
-	 * @When user :user copies page :page from collective :oldCollectiveId to collective :newCollectiveId with parentPath :parentPath
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user copies page :page from collective :oldCollectiveId to collective :newCollectiveId')]
+	#[\Behat\Step\When('user :user copies page :page from collective :oldCollectiveId to collective :newCollectiveId with parentPath :parentPath')]
 	public function userCopiesPageToCollective(string $user, string $page, string $oldCollective, string $newCollective, ?string $parentPath = null): void {
 		$this->setCurrentUser($user);
 		$oldCollectiveId = $this->collectiveIdByName($oldCollective);
@@ -503,24 +632,29 @@ class FeatureContext implements Context {
 		} else {
 			$formData = new TableNode([['copy', true]]);
 		}
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $oldCollectiveId . '/_pages/' . $pageId . '/to/' . $newCollectiveId, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $oldCollectiveId . '/pages/' . $pageId . '/to/' . $newCollectiveId, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user sets emoji for page :page to :emoji in :collective
-	 * @When user :user :fails to set emoji for page :page to :emoji in :collective
 	 *
 	 * @throws GuzzleException
 	 */
-	public function userSetsPageEmoji(string $user, string $page, string $emoji, string $collective, ?string $fail = null): void {
+	#[\Behat\Step\When('user :user sets emoji for page :page to :emoji in :collective')]
+	#[\Behat\Step\When('user :user :fails to set emoji for page :page to :emoji in :collective')]
+	#[\Behat\Step\When('user :user :fails to set emoji for page :page to :invalid :emoji in :collective')]
+	public function userSetsPageEmoji(string $user, string $page, string $emoji, string $collective, ?string $fail = null, ?string $invalid = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$formData = new TableNode([['emoji', $emoji]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/emoji', $formData);
-		if ($fail === "fails") {
-			$this->assertStatusCode(403);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/emoji', $formData);
+		if ($fail === 'fails') {
+			if ($invalid === 'invalid') {
+				$this->assertStatusCode(400);
+			} else {
+				$this->assertStatusCode(403);
+			}
 		} else {
 			$this->assertStatusCode(200);
 			$this->assertPageKeyValue($pageId, 'emoji', $emoji);
@@ -528,18 +662,72 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user sets subpageOrder for page :page to :subpageOrder in :collective
-	 * @When user :user :fails to set subpageOrder for page :page to :subpageOrder in :collective
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user sees emoji :emoji for page :page in :collective')]
+	public function userSeesPageEmoji(string $user, string $page, string $emoji, string $collective): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/' . $pageId);
+		$this->assertStatusCode(200);
+		$this->assertPageKeyValue($pageId, 'emoji', $emoji);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets emoji for template :template to :emoji in :collective')]
+	#[\Behat\Step\When('user :user :fails to set emoji for template :template to :emoji in :collective')]
+	public function userSetsTemplateEmoji(string $user, string $template, string $emoji, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$templateId = $this->templateIdByName($collectiveId, $template);
+		$formData = new TableNode([['emoji', $emoji]]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $templateId . '/emoji', $formData);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+			$this->assertPageKeyValue($templateId, 'emoji', $emoji);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user sets full width for page :page to :fullWidth in :collective')]
+	#[\Behat\Step\When('user :user :fails to set full width for page :page to :fullWidth in :collective')]
+	public function userSetsFullWidth(string $user, string $page, string $fullWidth, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$isFullWidth = $fullWidth === 'true';
+		$formData = new TableNode([['fullWidth', $isFullWidth]]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/fullWidth', $formData);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+			$this->assertPageKeyValue($pageId, 'isFullWidth', $isFullWidth);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user sets subpageOrder for page :page to :subpageOrder in :collective')]
+	#[\Behat\Step\When('user :user :fails to set subpageOrder for page :page to :subpageOrder in :collective')]
 	public function userSetsPageSubpageOrder(string $user, string $page, string $subpageOrder, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$formData = new TableNode([['subpageOrder', $subpageOrder]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/subpageOrder', $formData);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/subpageOrder', $formData);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -547,27 +735,124 @@ class FeatureContext implements Context {
 		}
 	}
 
-	/**
-	 * @When user :user gets setting :key with value :value
-	 *
-	 * @throws GuzzleException
-	 */
-	public function userGetsSetting(string $user, string $key, string $value): void {
+	#[\Behat\Step\When('user :user sets content of file :filePath to :content in collective :collective')]
+	public function userSetsCollectiveFileContent(string $user, string $filePath, string $content, string $collective): void {
 		$this->setCurrentUser($user);
-
-		$this->sendOcsRequest('GET', '/apps/collectives/api/v1.0/settings/user/' . $key);
-		$this->assertStatusCode(200);
-
-		$jsonBody = $this->getJson();
-		Assert::assertEquals($value, $jsonBody['ocs']['data']);
+		$userCollectivesPath = $this->getUserCollectivesPath($user);
+		$davPath = '/dav/files/' . $user . '/' . $userCollectivesPath . '/' . urlencode($collective) . '/' . $filePath;
+		$this->sendRemoteRequest('PUT', $davPath, $content, null, ['Content-Type' => 'text/markdown']);
+		$this->assertStatusCode(204);
 	}
 
 	/**
-	 * @When user :user sets setting :key to value :value
-	 * @When user :user :fails to set setting :key to value :value
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user uploads attachment :fileName to page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to upload attachment :fileName to page :page in :collective')]
+	public function userUploadsAttachment(string $user, string $fileName, string $page, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$filePath = 'tests/Integration/features/fixtures/' . $fileName;
+		$file = fopen($filePath, 'rb');
+		$multipart = [[
+			'name' => 'file',
+			'contents' => $file,
+			'filename' => $fileName,
+		]];
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments', $multipart);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user renames attachment :fileName to :newFileName for page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to rename attachment :fileName to :newFileName for page :page in :collective')]
+	public function userRenamesAttachment(string $user, string $fileName, string $newFileName, string $page, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$attachmentId = $this->attachmentIdByName($collectiveId, $pageId, $fileName);
+		$formData = new TableNode([['name', $newFileName]]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments/' . $attachmentId, $formData);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user deletes attachment :fileName for page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to delete attachment :fileName for page :page in :collective')]
+	public function userDeletesAttachment(string $user, string $fileName, string $page, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$attachmentId = $this->attachmentIdByName($collectiveId, $pageId, $fileName);
+		$this->deletedAttachmentId = $attachmentId;
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments/' . $attachmentId);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user restores deleted attachment for page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to restore deleted attachment for page :page in :collective')]
+	public function userRestoresAttachment(string $user, string $page, string $collective, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		Assert::assertNotNull($this->deletedAttachmentId, 'No attachment has been deleted previously');
+		$attachmentId = $this->deletedAttachmentId;
+		$this->sendOcsCollectivesRequest('PATCH', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments/trash/' . $attachmentId);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user gets setting :key with value :value')]
+	public function userGetsSetting(string $user, string $key, ?string $value = null): string {
+		$this->setCurrentUser($user);
+
+		$this->sendOcsCollectivesRequest('GET', 'settings/user/' . $key);
+		$this->assertStatusCode(200);
+
+		$jsonBody = $this->getJson();
+		if ($value) {
+			Assert::assertEquals($value, $jsonBody['ocs']['data'][$key]);
+		}
+
+		return $jsonBody['ocs']['data'][$key];
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user sets setting :key to value :value')]
+	#[\Behat\Step\When('user :user :fails to set setting :key to value :value')]
 	public function userSetsSetting(string $user, string $key, string $value, ?string $fails = null): void {
 		$this->setCurrentUser($user);
 
@@ -575,20 +860,196 @@ class FeatureContext implements Context {
 			['key', $key],
 			['value', $value],
 		]);
-		$this->sendOcsRequest('POST', '/apps/collectives/api/v1.0/settings/user', $data);
-		if ($fails !== "fails") {
+		$this->sendOcsCollectivesRequest('POST', 'settings/user', $data);
+		if ($fails !== 'fails') {
 			$this->assertStatusCode(200);
 		} else {
 			$this->assertStatusCode(400);
 		}
 	}
 
+	#[\Behat\Step\When('we wait for :seconds seconds')]
+	public function waitSeconds(int $seconds): void {
+		sleep($seconds);
+	}
+
+	#[\Behat\Step\When('user :user creates session for :collective')]
+	#[\Behat\Step\When('user :user :fails to create session for :collective')]
+	public function userCreatesSession(string $user, string $collective, ?string $fails = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/sessions');
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+			$jsonBody = $this->getJson();
+			$this->store['sessionToken'] = $jsonBody['ocs']['data']['token'];
+		} else {
+			$this->assertStatusCode(404);
+		}
+	}
+
+	#[\Behat\Step\When('user :user updates session for :collective')]
+	#[\Behat\Step\When('user :user updates session for :collective with token :token')]
+	#[\Behat\Step\When('user :user :fails to update session for :collective')]
+	#[\Behat\Step\When('user :user :fails to update session for :collective with token :token')]
+	public function userUpdatesSession(string $user, string $collective, ?string $fails = null, ?string $token = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		if ($token === null) {
+			Assert::assertArrayHasKey('sessionToken', $this->store);
+			Assert::assertNotEmpty($this->store['sessionToken']);
+			$token = $this->store['sessionToken'];
+		}
+		$data = new TableNode([
+			['token', $token],
+		]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/sessions', $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(404);
+		}
+	}
+
+	#[\Behat\Step\When('user :user closes session for :collective')]
+	#[\Behat\Step\When('user :user closes session for :collective with token :token')]
+	#[\Behat\Step\When('user :user :fails to close session for :collective')]
+	#[\Behat\Step\When('user :user :fails to close session for :collective with token :token')]
+	public function userClosesSession(string $user, string $collective, ?string $fails = null, ?string $token = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		if ($token === null) {
+			Assert::assertArrayHasKey('sessionToken', $this->store);
+			Assert::assertNotEmpty($this->store['sessionToken']);
+			$token = $this->store['sessionToken'];
+		}
+		$data = new TableNode([
+			['token', $token],
+		]);
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/sessions', $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(404);
+		}
+	}
+
+	#[\Behat\Step\When('user :user creates tag :tag with color :color for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to create tag :tag with color :color for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to create tag :tag with invalid color :invalidColor for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to create :existing tag :tag with color :color for collective :collective')]
+	public function userCreatesTag(string $user, string $collective, string $tag, ?string $color = null, ?string $fails = null, ?string $invalidColor = null, ?string $existing = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$data = new TableNode([
+			['name', $tag],
+			['color', $color ?? $invalidColor],
+		]);
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/tags', $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			if ($existing !== null || $invalidColor !== null) {
+				$this->assertStatusCode(400);
+			} else {
+				$this->assertStatusCode(403);
+			}
+		}
+	}
+
+	#[\Behat\Step\When('user :user updates tag :tag with color :color for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to update tag :tag with color :color for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to update tag :tag with invalid color :invalidColor for collective :collective')]
+	public function userUpdatesTag(string $user, string $collective, string $tag, ?string $color = null, ?string $fails = null, ?string $invalidColor = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$id = $this->tagIdByName($collectiveId, $tag);
+		$data = new TableNode([
+			['name', $tag],
+			['color', $color ?? $invalidColor],
+		]);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/tags/' . $id, $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			if ($invalidColor !== null) {
+				$this->assertStatusCode(400);
+			} else {
+				$this->assertStatusCode(403);
+			}
+		}
+	}
+
+	#[\Behat\Step\When('user :user deletes tag :tag for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to delete tag :tag for collective :collective')]
+	public function userDeletesTag(string $user, string $collective, string $tag, ?string $fails = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$id = $this->tagIdByName($collectiveId, $tag);
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/tags/' . $id);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	#[\Behat\Step\When('user :user sees tag :tag with color :color for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to see tag :tag for collective :collective')]
+	#[\Behat\Step\When('user :user :fails to see tag :tag with color :color for collective :collective')]
+	public function userSeesTag(string $user, string $collective, string $tag, ?string $color = null, ?string $fails = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$id = $this->tagIdByName($collectiveId, $tag, $color);
+		if ($fails !== 'fails') {
+			Assert::assertNotNull($id);
+		} else {
+			Assert::assertNull($id);
+		}
+	}
+
+	#[\Behat\Step\When('user :user adds tag :tag to page :page in collective :collective')]
+	#[\Behat\Step\When('user :user :fails to add tag :tag to page :page in collective :collective')]
+	#[\Behat\Step\When('user :user :fails to add tagId :tagId to page :page in collective :collective')]
+	public function userAddsTagToPage(string $user, string $collective, string $page, ?string $tag = null, ?string $tagId = null, ?string $fails = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		if ($tag) {
+			$tagId = $this->tagIdByName($collectiveId, $tag);
+		}
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/tags/' . $tagId);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} elseif (!$tag) {
+			// Trying to add a non-existent tag
+			$this->assertStatusCode(404);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	#[\Behat\Step\When('user :user removes tag :tag from page :page in collective :collective')]
+	#[\Behat\Step\When('user :user :fails to remove tag :tag from page :page in collective :collective')]
+	public function userRemovesTagFromPage(string $user, string $collective, string $page, string $tag, ?string $fails = null): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$tagId = $this->tagIdByName($collectiveId, $tag);
+		$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/tags/' . $tagId);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
 	/**
-	 * @When user :user joins team :name with owner :owner
-	 * @When user :user joins team :name with owner :owner with level :level
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user joins team :name with owner :owner')]
+	#[\Behat\Step\When('user :user joins team :name with owner :owner with level :level')]
 	public function userJoinsTeam(string $user, string $name, string $owner, ?string $level = null): void {
 		$this->setCurrentUser($owner);
 		$circleId = $this->circleIdByName($name);
@@ -614,9 +1075,7 @@ class FeatureContext implements Context {
 		}
 	}
 
-	/**
-	 * @When user :user leaves team :name with owner :owner
-	 */
+	#[\Behat\Step\When('user :user leaves team :name with owner :owner')]
 	public function userLeavesTeam(string $user, string $name, string $owner): void {
 		$this->setCurrentUser($owner);
 		$circleId = $this->circleIdByName($name);
@@ -629,10 +1088,9 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user is member of team :name
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user is member of team :name')]
 	public function userIsMemberOfTeam(string $user, string $name): void {
 		$this->setCurrentUser($user);
 		$circleId = $this->circleIdByName($name);
@@ -640,17 +1098,17 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user deletes team :name
-	 * @When user :user :fails to delete team :name
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes team :name')]
+	#[\Behat\Step\When('user :user :fails to delete team :name')]
 	public function userDeletesTeam(string $user, string $name, ?string $fails = null): void {
 		$this->setCurrentUser($user);
 		$circleId = $this->circleIdByName($name);
 		Assert::assertNotNull($circleId);
 		$this->sendOcsRequest('DELETE', '/apps/circles/circles/' . $circleId);
-		if ($fails !== "fails") {
+		if ($fails !== 'fails') {
 			$this->assertStatusCode(200);
 		} else {
 			$this->assertStatusCode(400);
@@ -658,29 +1116,39 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When app :appId is :status
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('app :appId is :status')]
 	public function toggleApp(string $appId, string $status): void {
 		$this->setCurrentUser('admin');
 
-		$jsonData = ['appIds' => [$appId]];
+		$jsonData = (int)$this->getNextcloudVersion(true) >= 34
+			? ['appId' => $appId]
+			: ['appIds' => [$appId]];
+
+		$headers = [
+			'Authorization' => 'Basic ' . base64_encode('admin:admin'),
+		];
 
 		if ($status === 'enabled') {
-			$this->sendRequest('POST', '/settings/apps/enable', null, $jsonData);
+			$endpoint = 'enable';
 		} elseif ($status === 'disabled') {
-			$this->sendRequest('POST', '/settings/apps/disable', null, $jsonData);
+			$endpoint = 'disable';
 		} else {
 			throw new RuntimeException('Unknown app status: ' . $status);
 		}
+
+		(int)$this->getNextcloudVersion(true) >= 34
+			? $this->sendOcsRequest('POST', '/apps/appstore/api/v1/apps/' . $endpoint, null, $jsonData, $headers)
+			: $this->sendRequest('POST', '/settings/apps/' . $endpoint, null, $jsonData, $headers);
+
+		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user has quota :quota
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user has quota :quota')]
 	public function setUserQuota(string $user, string $quota): void {
 		$this->setCurrentUser('admin');
 		$data = new TableNode([
@@ -692,108 +1160,104 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user creates public share for :collective
-	 * @When user :user :fails to create public share for :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user creates public share for :collective')]
+	#[\Behat\Step\When('user :user :fails to create public share for :collective')]
 	public function userCreatesPublicShare(string $user, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
-		$this->sendRequest('POST', '/apps/collectives/_api/' . $collectiveId . '/share');
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/shares');
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
 			$jsonBody = $this->getJson();
-			Assert::assertNotEmpty($jsonBody['data']['token']);
+			Assert::assertNotEmpty($jsonBody['ocs']['data']['token']);
 		}
 	}
 
 	/**
-	 * @When user :user creates public page share for page :page in :collective
-	 * @When user :user :fails to create public page share for page :page in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user creates public page share for page :page in :collective')]
+	#[\Behat\Step\When('user :user :fails to create public page share for page :page in :collective')]
 	public function userCreatesPublicPageShare(string $user, string $collective, string $page, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('POST', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/share');
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('POST', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/shares');
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
 			$jsonBody = $this->getJson();
-			Assert::assertNotEmpty($jsonBody['data']['token']);
+			Assert::assertNotEmpty($jsonBody['ocs']['data']['token']);
 		}
 	}
 
 	/**
-	 * @When user :user sets editing permissions for collective share :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets editing permissions for collective share :collective')]
 	public function userSetsPublicShareEditPermissions(string $user, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 		$formData = new TableNode([['editable', true]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/share/' . $token, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/shares/' . $token, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user sets editing permissions for page share :page in collective :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user sets editing permissions for page share :page in collective :collective')]
 	public function userSetsPublicFileShareEditPermissions(string $user, string $page, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$token = $this->getShareToken($collectiveId, $pageId);
 		$formData = new TableNode([['editable', true]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageId . '/share/' . $token, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/shares/' . $token, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user unsets editing permissions for collective :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user unsets editing permissions for collective share :collective')]
 	public function userUnsetsPublicShareEditPermissions(string $user, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 		$formData = new TableNode([['editable', false]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/share/' . $token, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/shares/' . $token, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user unsets editing permissions for page share :page in collective :collective
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user unsets editing permissions for page share :page in collective :collective')]
 	public function userUnsetsPublicFileShareEditPermissions(string $user, string $page, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$token = $this->getShareToken($collectiveId, $pageId);
 		$formData = new TableNode([['editable', false]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/' . $collectiveId . '/share/' . $token, $formData);
+		$this->sendOcsCollectivesRequest('PUT', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/shares/' . $token, $formData);
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When user :user stores token for public share :collective
-	 * @When user :user stores token for public page share :pageShare in collective :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user stores token for public share :collective')]
+	#[\Behat\Step\When('user :user stores token for public page share :pageShare in collective :collective')]
 	public function userStoresPublicShareToken(string $user, string $collective, ?string $pageShare = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -805,11 +1269,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user deletes public share for :collective
-	 * @When user :user deletes public page share :pageShare in collective :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes public share for :collective')]
+	#[\Behat\Step\When('user :user deletes public page share :pageShare in collective :collective')]
 	public function userDeletesPublicShare(string $user, string $collective, ?string $pageShare = null): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -819,120 +1283,113 @@ class FeatureContext implements Context {
 		}
 		$token = $this->getShareToken($collectiveId, $pageShareId);
 		if ($pageShare) {
-			$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId . '/_pages/' . $pageShareId . '/share/' . $token);
+			$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/pages/' . $pageShareId . '/shares/' . $token);
 		} else {
-			$this->sendRequest('DELETE', '/apps/collectives/_api/' . $collectiveId . '/share/' . $token);
+			$this->sendOcsCollectivesRequest('DELETE', 'collectives/' . $collectiveId . '/shares/' . $token);
 		}
 		$this->assertStatusCode(200);
 	}
 
 	/**
-	 * @When anonymous sees public collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sees public collective :collective with owner :owner')]
 	public function anonymousSeesPublicCollective(string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token, null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token, null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertCollectiveByName($collective);
 		$this->assertCollectiveLevel($collective, 1);
 	}
 
 	/**
-	 * @When anonymous sees public page share :page in collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sees public page share :page in collective :collective with owner :owner')]
 	public function anonymousSeesPublicPageShare(string $page, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$token = $this->getShareToken($collectiveId, $pageId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token, null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token, null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertCollectiveByName($collective);
 		$this->assertCollectiveLevel($collective, 1);
 	}
 
 	/**
-	 * @When anonymous fails to see public share with stored token
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous fails to see public share with stored token')]
 	public function anonymousFailsToSeePublicCollective(): void {
 		Assert::assertArrayHasKey('shareToken', $this->store);
 		Assert::assertNotEmpty($this->store['shareToken']);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $this->store['shareToken'], null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $this->store['shareToken'], null, null, [], false);
 		$this->assertStatusCode(404);
 	}
 
 	/**
-	 * @When anonymous sees pagePath :path in public collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sees pagePath :path in public collective :collective with owner :owner')]
 	public function anonymousSeesPublicCollectivePages(string $path, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages', null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages', null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertPageByPath($path);
 	}
 
 	/**
-	 * @When anonymous sees pagePath :path in public page share :pageShare in collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sees pagePath :path in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousSeesPublicPagePages(string $path, string $pageShare, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageShareId = $this->pageIdByName($collectiveId, $pageShare);
 		$token = $this->getShareToken($collectiveId, $pageShareId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages', null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages', null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertPageByPath($path);
 	}
 
 	/**
-	 * @When anonymous doesn't see pagePath :path in public collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous doesn\'t see pagePath :path in public collective :collective with owner :owner')]
 	public function anonymousDoesntSeePublicCollectivePages(string $path, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages', null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages', null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertPageByPath($path, true);
 	}
 
 	/**
-	 * @When anonymous doesn't see pagePath :path in public page share :pageShare in collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous doesn\'t see pagePath :path in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousDoesntSeePublicPageSharePages(string $path, string $pageShare, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageShareId = $this->pageIdByName($collectiveId, $pageShare);
 		$token = $this->getShareToken($collectiveId, $pageShareId);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages', null, null, [], false);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages', null, null, [], false);
 		$this->assertStatusCode(200);
 		$this->assertPageByPath($path, true);
 	}
 
 	/**
-	 * @When anonymous creates page :page with parentPath :parentPath in public collective :collective with owner :owner
-	 * @When anonymous :fails to create page :page with parentPath :parentPath in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous creates page :page with parentPath :parentPath in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to create page :page with parentPath :parentPath in public collective :collective with owner :owner')]
 	public function anonymousCreatesPublicCollectivePage(string $page, string $parentPath, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -940,8 +1397,8 @@ class FeatureContext implements Context {
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 
 		$formData = new TableNode([['title', $page]]);
-		$this->sendRequest('POST', '/apps/collectives/_api/p/' . $token . '/_pages/' . $parentId, $formData, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('POST', 'p/collectives/' . $token . '/pages/' . $parentId, $formData, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -949,11 +1406,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous creates page :page with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner
-	 * @When anonymous :fails to create page :page with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous creates page :page with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to create page :page with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousCreatesPublicPagePage(string $page, string $parentPath, string $pageShare, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -962,8 +1419,8 @@ class FeatureContext implements Context {
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 
 		$formData = new TableNode([['title', $page]]);
-		$this->sendRequest('POST', '/apps/collectives/_api/p/' . $token . '/_pages/' . $parentId, $formData, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('POST', 'p/collectives/' . $token . '/pages/' . $parentId, $formData, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -971,11 +1428,28 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous moves page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner
-	 * @When anonymous :fails to move page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('anonymous fails to create page :page with parentPath :parentPath from template :template in public page share :pageShare in collective :collective with owner :owner')]
+	public function anonymousFailsToCreatePublicPagePageFromTemplate(string $page, string $parentPath, string $template, string $pageShare, string $collective, string $owner): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageShareId = $this->pageIdByName($collectiveId, $pageShare);
+		$token = $this->getShareToken($collectiveId, $pageShareId);
+		$parentId = $this->getParentId($collectiveId, $parentPath);
+		$templateId = $this->templateIdByName($collectiveId, $template);
+
+		$formData = new TableNode([['title', $page], ['templateId', $templateId]]);
+		$this->sendOcsCollectivesRequest('POST', 'p/collectives/' . $token . '/pages/' . $parentId, $formData, null, [], false);
+		$this->assertStatusCode(403);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous moves page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to move page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner')]
 	public function anonymousMovesPage(string $page, string $newtitle, string $parentPath, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -983,8 +1457,8 @@ class FeatureContext implements Context {
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 		$formData = new TableNode([['parentId', $parentId], ['title', $newtitle]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId, $formData, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId, $formData, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -992,11 +1466,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous moves page :page to :newtitle with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner
-	 * @When anonymous :fails to move page :page to :newtitle with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous moves page :page to :newtitle with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to move page :page to :newtitle with parentPath :parentPath in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousMovesPageInPageShare(string $page, string $newtitle, string $parentPath, string $pageShare, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -1005,8 +1479,8 @@ class FeatureContext implements Context {
 		$pageId = $this->pageIdByName($collectiveId, $page);
 		$parentId = $this->getParentId($collectiveId, $parentPath);
 		$formData = new TableNode([['parentId', $parentId], ['title', $newtitle]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId, $formData, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId, $formData, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -1014,11 +1488,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous copies page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner
-	 * @When anonymous :fails to copy page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous copies page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to copy page :page to :newtitle with parentPath :parentPath in public collective :collective with owner :owner')]
 	public function anonymousCopiesPage(string $page, string $newtitle, string $parentPath, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -1030,8 +1504,8 @@ class FeatureContext implements Context {
 			['title', $newtitle],
 			['copy', true],
 		]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId, $formData, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId, $formData, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -1039,11 +1513,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous sets emoji for page :page to :emoji in public collective :collective with owner :owner
-	 * @When anonymous :fails to set emoji for page :page to :emoji in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sets emoji for page :page to :emoji in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to set emoji for page :page to :emoji in public collective :collective with owner :owner')]
 	public function anonymousSetsPublicCollectivePageEmoji(string $page, string $emoji, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -1051,8 +1525,8 @@ class FeatureContext implements Context {
 		$pageId = $this->pageIdByName($collectiveId, $page);
 
 		$formData = new TableNode([['emoji', $emoji]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId . '/emoji', $formData);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId . '/emoji', $formData);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -1061,11 +1535,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous sets emoji for page :page to :emoji in public page share :pageShare in collective :collective with owner :owner
-	 * @When anonymous :fails to set emoji for page :page to :emoji in public page share :pageShare in collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous sets emoji for page :page to :emoji in public page share :pageShare in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to set emoji for page :page to :emoji in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousSetsPublicPageSharePageEmoji(string $page, string $emoji, string $pageShare, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -1074,8 +1548,8 @@ class FeatureContext implements Context {
 		$pageId = $this->pageIdByName($collectiveId, $page);
 
 		$formData = new TableNode([['emoji', $emoji]]);
-		$this->sendRequest('PUT', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId . '/emoji', $formData);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId . '/emoji', $formData);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -1084,19 +1558,19 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous trashes page :page in public collective :collective with owner :owner
-	 * @When anonymous :fails to trash page :page in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous trashes page :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to trash page :page in public collective :collective with owner :owner')]
 	public function anonymousTrashesPublicCollectivePage(string $page, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 
-		$this->sendRequest('DELETE', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId, null, null, [], false);
-		if ($fail === "fails") {
+		$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/' . $pageId, null, null, [], false);
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(200);
@@ -1104,10 +1578,9 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When anonymous fails to trash page :page in public page share :pageShare in collective :collective with owner :owner
-	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous fails to trash page :page in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousTrashesPublicPageSharePage(string $page, string $pageShare, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
@@ -1115,102 +1588,334 @@ class FeatureContext implements Context {
 		$token = $this->getShareToken($collectiveId, $pageShareId);
 		$pageId = $this->pageIdByName($collectiveId, $page);
 
-		$this->sendRequest('DELETE', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId, null, null, [], false);
+		$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/' . $pageId, null, null, [], false);
 		$this->assertStatusCode(403);
 	}
 
 	/**
-	 * @When anonymous restores page :page from trash in public collective :collective with owner :owner
-	 * @When anonymous :fails to restore page :page from trash in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous restores page :page from trash in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to restore page :page from trash in public collective :collective with owner :owner')]
 	public function anonymousRestoresPublicCollectivePage(string $page, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 
-		if ($fail === "fails") {
-			$this->sendRequest('PATCH', '/apps/collectives/_api/p/' . $token . '/_pages/trash/1', null, null, [], false);
+		if ($fail === 'fails') {
+			$this->sendOcsCollectivesRequest('PATCH', 'p/collectives/' . $token . '/pages/trash/1', null, null, [], false);
 			$this->assertStatusCode(403);
 		} else {
 			$pageId = $this->trashedPageIdByName($collectiveId, $page, $token);
-			$this->sendRequest('PATCH', '/apps/collectives/_api/p/' . $token . '/_pages/trash/' . $pageId, null, null, [], false);
+			$this->sendOcsCollectivesRequest('PATCH', 'p/collectives/' . $token . '/pages/trash/' . $pageId, null, null, [], false);
 			$this->assertStatusCode(200);
 		}
 	}
 
 	/**
-	 * @When anonymous deletes page :page from trash in public collective :collective with owner :owner
-	 * @When anonymous :fails to delete page :page from trash in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous deletes page :page from trash in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to delete page :page from trash in public collective :collective with owner :owner')]
 	public function anonymousDeletesPublicCollectivePage(string $page, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 
-		if ($fail === "fails") {
-			$this->sendRequest('DELETE', '/apps/collectives/_api/p/' . $token . '/_pages/trash/1', null, null, [], false);
+		if ($fail === 'fails') {
+			$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/trash/1', null, null, [], false);
 			$this->assertStatusCode(403);
 		} else {
 			$pageId = $this->trashedPageIdByName($collectiveId, $page, $token);
-			$this->sendRequest('DELETE', '/apps/collectives/_api/p/' . $token . '/_pages/trash/' . $pageId, null, null, [], false);
+			$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/trash/' . $pageId, null, null, [], false);
 			$this->assertStatusCode(200);
 		}
 	}
 
 	/**
-	 * @Then anonymous sees attachment :name with mimetype :mimetype for :page in public collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
-	public function anonymousSeesAttachments(string $name, string $mimetype, string $page, string $collective, string $owner): void {
+	#[\Behat\Step\When('anonymous uploads attachment :fileName to page :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to upload attachment :fileName to page :page in public collective :collective with owner :owner')]
+	public function anonymousUploadsAttachment(string $fileName, string $page, string $collective, string $owner, ?string $fail = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$filePath = 'tests/Integration/features/fixtures/' . $fileName;
+		$file = fopen($filePath, 'rb');
+		$multipart = [[
+			'name' => 'file',
+			'contents' => $file,
+			'filename' => $fileName,
+		]];
+		$this->sendOcsCollectivesRequest('POST', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments', $multipart);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('anonymous renames attachment :fileName to :newFileName for page :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to rename attachment :fileName to :newFileName for page :page in public collective :collective with owner :owner')]
+	public function anonymousRenamesAttachment(string $fileName, string $newFileName, string $page, string $collective, string $owner, ?string $fail = null): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$token = $this->getShareToken($collectiveId);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId . '/attachments');
-		$this->assertStatusCode(200);
-		$this->assertAttachment($name, $mimetype);
+		$attachmentId = $this->attachmentIdByName($collectiveId, $pageId, $fileName);
+		$formData = new TableNode([['name', $newFileName]]);
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments/' . $attachmentId, $formData);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
 	}
 
 	/**
-	 * @Then anonymous sees attachment :name with mimetype :mimetype for :page in public page share :pageShare in collective :collective with owner :owner
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('anonymous deletes attachment :fileName for page :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to delete attachment :fileName for page :page in public collective :collective with owner :owner')]
+	public function anonymousDeletesAttachment(string $fileName, string $page, string $collective, string $owner, ?string $fail = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$attachmentId = $this->attachmentIdByName($collectiveId, $pageId, $fileName);
+		$this->deletedAttachmentId = $attachmentId;
+		$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments/' . $attachmentId);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('anonymous restores deleted attachment for page :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to restore deleted attachment for page :page in public collective :collective with owner :owner')]
+	public function anonymousRestoresAttachment(string $page, string $collective, string $owner, ?string $fail = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		Assert::assertNotNull($this->deletedAttachmentId, 'No attachment has been deleted previously');
+		$attachmentId = $this->deletedAttachmentId;
+		$this->sendOcsCollectivesRequest('PATCH', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments/trash/' . $attachmentId, null, null, [], false);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(403);
+		} else {
+			$this->assertStatusCode(200);
+		}
+	}
+
+	/**
+	 *
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\Then('anonymous sees attachment :name with mimetype :mimetype for :page in public collective :collective with owner :owner')]
+	#[\Behat\Step\Then('anonymous :fails to see attachment :name with mimetype :mimetype for :page in public collective :collective with owner :owner')]
+	public function anonymousSeesAttachment(string $name, string $mimetype, string $page, string $collective, string $owner, ?string $fail = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments');
+		if ($fail === 'fails') {
+			$this->assertStatusCode(200);
+			$this->assertAttachment($name, $mimetype, 'text', true);
+		} else {
+			$this->assertStatusCode(200);
+			$this->assertAttachment($name, $mimetype);
+		}
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\Then('anonymous sees attachment :name with mimetype :mimetype for :page in public page share :pageShare in collective :collective with owner :owner')]
 	public function anonymousSeesPageShareAttachments(string $name, string $mimetype, string $page, string $pageShare, string $collective, string $owner): void {
 		$this->setCurrentUser($owner);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageShareId = $this->pageIdByName($collectiveId, $pageShare);
 		$token = $this->getShareToken($collectiveId, $pageShareId);
 		$pageId = $this->pageIdByName($collectiveId, $page);
-		$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages/' . $pageId . '/attachments');
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/pages/' . $pageId . '/attachments');
 		$this->assertStatusCode(200);
 		$this->assertAttachment($name, $mimetype);
 	}
 
-	private function getUserCollectivesPath(string $user): string {
-		// Dirty hack to not break it on local dev setup
-		$lang = $this->getUserLanguage($user);
-		if ($lang === 'de') {
-			return 'Kollektive';
+	#[\Behat\Step\When('anonymous creates tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to create tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to create :existing tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous creates tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to create tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	public function anonymousCreatesTag(string $collective, string $tag, string $color, string $owner, ?string $fails = null, ?string $existing = null, ?string $pageShare = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getPublicTagShareToken($collectiveId, $pageShare);
+		$data = new TableNode([
+			['name', $tag],
+			['color', $color],
+		]);
+		$this->sendOcsCollectivesRequest('POST', 'p/collectives/' . $token . '/tags', $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			if ($existing !== null) {
+				$this->assertStatusCode(400);
+			} else {
+				$this->assertStatusCode(403);
+			}
 		}
-
-		return 'Collectives';
 	}
+
+	#[\Behat\Step\When('anonymous updates tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to update tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous updates tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to update tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	public function anonymousUpdatesTag(string $collective, string $tag, string $color, string $owner, ?string $fails = null, ?string $pageShare = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getPublicTagShareToken($collectiveId, $pageShare);
+		$id = $this->tagIdByName($collectiveId, $tag, null, $token);
+		$data = new TableNode([
+			['name', $tag],
+			['color', $color],
+		]);
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/tags/' . $id, $data);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	#[\Behat\Step\When('anonymous deletes tag :tag for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to delete tag :tag for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous deletes tag :tag in public page share :pageShare for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to delete tag :tag in public page share :pageShare for collective :collective with owner :owner')]
+	public function anonymousDeletesTag(string $collective, string $tag, string $owner, ?string $fails = null, ?string $pageShare = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getPublicTagShareToken($collectiveId, $pageShare);
+		$id = $this->tagIdByName($collectiveId, $tag, null, $token);
+		$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/tags/' . $id);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	#[\Behat\Step\When('anonymous sees tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to see tag :tag for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to see tag :tag with color :color for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous sees tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to see tag :tag with color :color in public page share :pageShare for collective :collective with owner :owner')]
+	public function anonymousSeesTag(string $collective, string $tag, string $owner, ?string $color = null, ?string $fails = null, ?string $pageShare = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getPublicTagShareToken($collectiveId, $pageShare);
+		$id = $this->tagIdByName($collectiveId, $tag, $color, $token);
+		if ($fails !== 'fails') {
+			Assert::assertNotNull($id);
+		} else {
+			Assert::assertNull($id);
+		}
+	}
+
+	#[\Behat\Step\When('anonymous adds tag :tag to page :page in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to add tag :tag to page :page in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to add tagId :tagId to page :page in collective :collective with owner :owner')]
+	public function anonymousAddsTagToPage(string $collective, string $page, string $owner, ?string $tag = null, ?string $tagId = null, ?string $fails = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		if ($tag) {
+			$tagId = $this->tagIdByName($collectiveId, $tag);
+		}
+		$this->sendOcsCollectivesRequest('PUT', 'p/collectives/' . $token . '/pages/' . $pageId . '/tags/' . $tagId);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} elseif (!$tag) {
+			// Trying to add a non-existent tag
+			$this->assertStatusCode(404);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	#[\Behat\Step\When('anonymous removes tag :tag from page :page in collective :collective with owner :owner')]
+	#[\Behat\Step\When('anonymous :fails to remove tag :tag from page :page in collective :collective with owner :owner')]
+	public function anonymousRemovesTagFromPage(string $collective, string $page, string $owner, string $tag, ?string $fails = null): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$pageId = $this->pageIdByName($collectiveId, $page);
+		$tagId = $this->tagIdByName($collectiveId, $tag);
+		$this->sendOcsCollectivesRequest('DELETE', 'p/collectives/' . $token . '/pages/' . $pageId . '/tags/' . $tagId);
+		if ($fails !== 'fails') {
+			$this->assertStatusCode(200);
+		} else {
+			$this->assertStatusCode(403);
+		}
+	}
+
+	private function getPublicTagShareToken(int $collectiveId, ?string $pageShare = null): ?string {
+		if ($pageShare === null) {
+			return $this->getShareToken($collectiveId);
+		}
+		$pageId = $this->pageIdByName($collectiveId, $pageShare);
+		return $this->getShareToken($collectiveId, $pageId);
+	}
+
+	private function getUserCollectivesPath(string $user): string {
+		$this->setCurrentUser($user);
+		return $this->userGetsSetting($user, 'user_folder');
+	}
+
 	/**
-	 * @When user :user has webdav access to :collective with permissions :permissions
 	 *
 	 * @throws GuzzleException
 	 */
-	public function hasWebdavAccess(string $collective, string $user, string $permissions): void {
+	#[\Behat\Step\When('user :user sees webdav node :path')]
+	#[\Behat\Step\When('user :user :fails to see webdav node :path')]
+	public function webdavNodeExists(string $user, string $path, ?string $fail = null): void {
+		$this->setCurrentUser($user);
+		$this->sendRemoteRequest('PROPFIND', '/dav/files/' . $user . '/' . trim($path, '/'), null, null, ['Depth' => '0']);
+		if ($fail === 'fails') {
+			$this->assertStatusCode(404);
+		} else {
+			$this->assertStatusCode(207);
+		}
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user has webdav access to :collective with permissions :permissions')]
+	public function hasCollectiveWebdavAccess(string $collective, string $user, string $permissions): void {
 		$this->setCurrentUser($user);
 		$headers = [
 			'Content-Type' => 'Content-Type: text/xml; charset="utf-8"',
-			'Depth' => 0,
+			'Depth' => '0',
 		];
 		$dom = new DOMDocument('1.0', 'UTF-8');
 		$xPropfind = $dom->createElementNS('DAV:', 'D:propfind');
@@ -1221,7 +1926,36 @@ class FeatureContext implements Context {
 		$body = $dom->saveXML();
 		$userCollectivesPath = $this->getUserCollectivesPath($user);
 
-		$this->sendRemoteRequest('PROPFIND', '/dav/files/' . $user . '/' . $userCollectivesPath . '/' . urlencode($collective) . '/', $body, null, $headers);
+		$this->sendRemoteRequest('PROPFIND', '/dav/files/' . $user . $userCollectivesPath . '/' . urlencode($collective) . '/', $body, null, $headers);
+		$this->assertStatusCode(207);
+
+		// simplexml_load_string() would be better than preg_replace
+		$folderPermissions = preg_replace('/.*<oc:permissions>(.*)<\/oc:permissions>.*/sm', '\1', $this->response->getBody()->getContents());
+
+		Assert::assertEquals($permissions, $folderPermissions);
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('public share with owner :user has webdav access to :collective with permissions :permissions')]
+	public function hasCollectivePublicWebdavAccess(string $collective, string $user, string $permissions): void {
+		$this->setCurrentUser($user);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$token = $this->getShareToken($collectiveId);
+		$headers = [
+			'Content-Type' => 'Content-Type: text/xml; charset="utf-8"',
+			'Depth' => '0',
+		];
+		$dom = new DOMDocument('1.0', 'UTF-8');
+		$xPropfind = $dom->createElementNS('DAV:', 'D:propfind');
+		$xProp = $dom->createElement('D:prop');
+		$xProp->setAttribute('xmlns:oc', 'http://owncloud.org/ns');
+		$xProp->appendChild($dom->createElement('oc:permissions'));
+		$dom->appendChild($xPropfind)->appendChild($xProp);
+		$body = $dom->saveXML();
+
+		$this->sendPublicRequest('PROPFIND', '/dav/files/' . $token . '/', $body, null, $headers);
 		$this->assertStatusCode(207);
 
 		// simplexml_load_string() would be better than preg_replace
@@ -1237,7 +1971,7 @@ class FeatureContext implements Context {
 		$this->setCurrentUser($user);
 		$headers = [
 			'Content-Type' => 'Content-Type: text/xml; charset="utf-8"',
-			'Depth' => 1,
+			'Depth' => '1',
 		];
 		$dom = new DOMDocument('1.0', 'UTF-8');
 		$xPropfind = $dom->createElementNS('DAV:', 'D:propfind');
@@ -1282,11 +2016,38 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user uploads attachment :fileName to :page with file path :filePath in :collective
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user creates folder :folder')]
+	public function createsFolder(string $user, string $folderName): void {
+		$this->setCurrentUser($user);
+		$folderPath = '/dav/files/' . $user . '/' . $folderName;
+
+		$this->sendRemoteRequest('MKCOL', $folderPath);
+		$this->assertStatusCode(201);
+	}
+
+	/**
 	 *
 	 * @throws GuzzleException
 	 */
-	public function uploadsAttachment(string $user, string $fileName, string $page, string $filePath, string $collective): void {
+	#[\Behat\Step\When('user :user deletes folder :folder')]
+	#[\Behat\Step\When('user :user deletes folder :folder if it :exists')]
+	public function deletesFolder(string $user, string $folderName, ?string $noFail = null): void {
+		$this->setCurrentUser($user);
+		$folderPath = '/dav/files/' . $user . '/' . $folderName;
+
+		$this->sendRemoteRequest('DELETE', $folderPath);
+		if ($noFail === null) {
+			$this->assertStatusCode(204);
+		}
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user uploads attachment :fileName via webdav to :page with file path :filePath in :collective')]
+	public function uploadsAttachmentWebdav(string $user, string $fileName, string $page, string $filePath, string $collective): void {
 		$this->setCurrentUser($user);
 		$collectiveId = $this->collectiveIdByName($collective);
 		$pageId = $this->pageIdByName($collectiveId, $page);
@@ -1302,11 +2063,11 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user trashes page :page via webdav in :collective
-	 * @When user :user :fails to trash page :page via webdav in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user trashes page :page via webdav in :collective')]
+	#[\Behat\Step\When('user :user :fails to trash page :page via webdav in :collective')]
 	public function webdavTrashFile(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 		$userCollectivesPath = $this->getUserCollectivesPath($user);
@@ -1314,7 +2075,7 @@ class FeatureContext implements Context {
 		$filePath = '/dav/files/' . $user . '/' . $userCollectivesPath . '/' . urlencode($collective) . '/' . urlencode($page) . '.md';
 
 		$this->sendRemoteRequest('DELETE', $filePath);
-		if ($fail === "fails") {
+		if ($fail === 'fails') {
 			$this->assertStatusCode(403);
 		} else {
 			$this->assertStatusCode(204);
@@ -1322,16 +2083,16 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user restores page :page from trash via webdav in :collective
-	 * @When user :user :fails to restore page :page from trash via webdav in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user restores page :page from trash via webdav in :collective')]
+	#[\Behat\Step\When('user :user :fails to restore page :page from trash via webdav in :collective')]
 	public function webdavRestoreFile(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 
 		$href = $this->inWebdavTrash($collective, urlencode($page) . '.md', $user);
-		if ($fail === "fails") {
+		if ($fail === 'fails') {
 			Assert::assertNull($href, 'Page found in trash even though not expected: ' . $page);
 			return;
 		}
@@ -1347,16 +2108,16 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @When user :user deletes page :page from trash via webdav in :collective
-	 * @When user :user :fails to delete page :page from trash via webdav in :collective
 	 *
 	 * @throws GuzzleException
 	 */
+	#[\Behat\Step\When('user :user deletes page :page from trash via webdav in :collective')]
+	#[\Behat\Step\When('user :user :fails to delete page :page from trash via webdav in :collective')]
 	public function webdavDeleteFile(string $user, string $page, string $collective, ?string $fail = null): void {
 		$this->setCurrentUser($user);
 
 		$href = $this->inWebdavTrash($collective, urlencode($page) . '.md', $user);
-		if ($fail === "fails") {
+		if ($fail === 'fails') {
 			Assert::assertNull($href, 'Page found in trash even though not expected: ' . $page);
 			return;
 		}
@@ -1436,15 +2197,15 @@ class FeatureContext implements Context {
 	 */
 	private function collectiveIdByName(string $name, bool $trash = false): ?int {
 		if ($trash) {
-			$this->sendRequest('GET', '/apps/collectives/_api/trash');
+			$this->sendOcsCollectivesRequest('GET', 'collectives/trash');
 		} else {
-			$this->sendRequest('GET', '/apps/collectives/_api');
+			$this->sendOcsCollectivesRequest('GET', 'collectives');
 		}
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to get list of collectives');
 		}
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $collective) {
+		foreach ($jsonBody['ocs']['data']['collectives'] as $collective) {
 			if ($name === $collective['name']) {
 				return $collective['id'];
 			}
@@ -1456,12 +2217,12 @@ class FeatureContext implements Context {
 	 * @throws GuzzleException
 	 */
 	private function pageIdByName(int $collectiveId, string $name): ?int {
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages');
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to get list of pages for collective ' . $collectiveId);
 		}
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $page) {
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
 			if ($name === $page['title']) {
 				return $page['id'];
 			}
@@ -1469,22 +2230,75 @@ class FeatureContext implements Context {
 		return null;
 	}
 
+	private function attachmentIdByName(int $collectiveId, int $pageId, string $name): ?int {
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/' . $pageId . '/attachments');
+		if ($this->response->getStatusCode() !== 200) {
+			throw new RuntimeException('Unable to get list of attachments for page ' . $pageId . ' in collective ' . $collectiveId);
+		}
+		$jsonBody = $this->getJson();
+		foreach ($jsonBody['ocs']['data']['attachments'] as $attachment) {
+			if ($name === $attachment['name']) {
+				return $attachment['id'];
+			}
+		}
+		return null;
+	}
+
+	private function templateIdByName(int $collectiveId, string $name): ?int {
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/templates');
+		if ($this->response->getStatusCode() !== 200) {
+			throw new RuntimeException('Unable to get list of templates for collective ' . $collectiveId);
+		}
+		$jsonBody = $this->getJson();
+		foreach ($jsonBody['ocs']['data']['templates'] as $page) {
+			if ($name === $page['title']) {
+				return $page['id'];
+			}
+		}
+		return null;
+	}
+
+	private function expectTemplateId(int $collectiveId, string $templateName): bool {
+		return (bool)$this->templateIdByName($collectiveId, $templateName);
+	}
+
 	/**
 	 * @throws GuzzleException
 	 */
 	private function trashedPageIdByName(int $collectiveId, string $name, ?string $token = null): ?int {
 		if ($token) {
-			$this->sendRequest('GET', '/apps/collectives/_api/p/' . $token . '/_pages/trash', null, null, [], false);
+			$this->sendOcsCollectivesRequest('GET', '/p/collectives/' . $token . '/pages/trash', null, null, [], false);
 		} else {
-			$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages/trash');
+			$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages/trash');
 		}
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to get list of trashed pages for collective ' . $collectiveId);
 		}
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $page) {
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
 			if ($name === $page['title']) {
 				return $page['id'];
+			}
+		}
+		return null;
+	}
+
+	private function tagIdByName(int $collectiveId, string $name, ?string $color = null, ?string $token = null): ?int {
+		if ($token) {
+			$this->sendOcsCollectivesRequest('GET', '/p/collectives/' . $token . '/tags', null, null, [], false);
+		} else {
+			$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/tags');
+		}
+		if ($this->response->getStatusCode() !== 200) {
+			throw new RuntimeException('Unable to get list of tags for collective ' . $collectiveId);
+		}
+		$jsonBody = $this->getJson();
+		foreach ($jsonBody['ocs']['data']['tags'] as $tag) {
+			if ($name === $tag['name']) {
+				if ($color !== null && $color !== $tag['color']) {
+					return null;
+				}
+				return $tag['id'];
 			}
 		}
 		return null;
@@ -1504,7 +2318,7 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @param string|resource|null $body
+	 * @param TableNode|array|string|resource|null $body
 	 *
 	 * @throws GuzzleException
 	 */
@@ -1523,11 +2337,15 @@ class FeatureContext implements Context {
 	 */
 	private function sendOcsRequest(string $verb,
 		string $url,
-		?TableNode $body = null,
+		TableNode|array|null $body = null,
 		?array $jsonBody = null,
 		array $headers = [],
 		?bool $auth = true): void {
 		$fullUrl = $this->ocsUrl . $url;
+
+		$headers = array_merge($headers, [
+			'OCS-APIRequest' => 'true',
+		]);
 
 		// Add Xdebug trigger variable as GET parameter
 		$ocsJsonFormat = 'format=json';
@@ -1540,7 +2358,31 @@ class FeatureContext implements Context {
 	}
 
 	/**
-	 * @param TableNode|string|null $body
+	 * @throws GuzzleException
+	 */
+	private function sendOcsCollectivesRequest(string $verb,
+		string $url,
+		TableNode|array|null $body = null,
+		?array $jsonBody = null,
+		array $headers = [],
+		?bool $auth = true): void {
+		$this->sendOcsRequest($verb, self::API_URL . $url, $body, $jsonBody, $headers, $auth);
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	private function sendPublicRequest(string $verb,
+		string $url,
+		$body = null,
+		?array $jsonBody = null,
+		array $headers = []): void {
+		$fullUrl = $this->publicUrl . $url;
+		$this->sendRequestBase($verb, $fullUrl, $body, $jsonBody, $headers, false);
+	}
+
+	/**
+	 * @param TableNode|array|string|resource|null $body
 	 *
 	 * @throws GuzzleException
 	 */
@@ -1556,20 +2398,25 @@ class FeatureContext implements Context {
 			$this->cookieJars[$this->currentUser] = new CookieJar();
 		}
 
-		// Get request token for user (required due to CSRF checks)
-		if ($auth === true && !isset($this->requestTokens[$this->currentUser])) {
-			$this->getUserRequestToken($this->currentUser);
+		if ($auth === true) {
+			// Get request token for user (required due to CSRF checks)
+			if (!isset($this->requestTokens[$this->currentUser])) {
+				$this->getUserRequestToken($this->currentUser);
+			}
+
+			$options = ['cookies' => $this->cookieJars[$this->currentUser]];
+			$options['headers'] = array_merge($headers, [
+				'requesttoken' => $this->requestTokens[$this->currentUser],
+			]);
+		} else {
+			$options['headers'] = $headers;
 		}
-
-		$options = ['cookies' => $this->cookieJars[$this->currentUser]];
-
-		$options['headers'] = array_merge($headers, [
-			'requesttoken' => $this->requestTokens[$this->currentUser],
-		]);
 
 		if ($body instanceof TableNode) {
 			$fd = $body->getRowsHash();
 			$options['form_params'] = $fd;
+		} elseif (is_array($body)) {
+			$options['multipart'] = $body;
 		} elseif (is_string($body)) {
 			$options['body'] = $body;
 		}
@@ -1579,24 +2426,39 @@ class FeatureContext implements Context {
 		}
 
 		// Add Xdebug trigger variable as GET parameter
-		$xdebugSession = 'XDEBUG_SESSION=PHPSTORM';
-		if (str_contains($url, '?')) {
-			$url .= '&' . $xdebugSession;
-		} else {
-			$url .= '?' . $xdebugSession;
+		if ($this->setXdebugSession) {
+			$xdebugSession = 'XDEBUG_SESSION=PHPSTORM';
+			if (str_contains($url, '?')) {
+				$url .= '&' . $xdebugSession;
+			} else {
+				$url .= '?' . $xdebugSession;
+			}
 		}
 
-		// clear the cached json response
+		// clear the cached JSON response
 		$this->json = null;
 		try {
-			if ($verb === 'PROPFIND' || $verb === 'MOVE') {
-				$this->response = $client->request($verb, $url, $options);
-			} else {
-				$this->response = $client->{$verb}($url, $options);
-			}
+			$this->response = $client->request($verb, $url, $options);
 		} catch (ClientException $e) {
 			$this->response = $e->getResponse();
 		}
+	}
+
+	private function getNextcloudVersion(bool $major = false): string {
+		if ($this->nextcloudVersion === null) {
+			$headers = [
+				'Content-Type' => 'Content-Type: text/xml; charset="utf-8"',
+				'Depth' => '0',
+			];
+
+			$statusUrl = str_replace('index.php', 'status.php', $this->baseUrl);
+			$this->sendRequestBase('GET', $statusUrl, null, null, $headers, false);
+			$this->assertStatusCode(200);
+
+			$this->nextcloudVersion = $this->getJson()['versionstring'];
+		}
+
+		return $major ? explode('.', $this->nextcloudVersion)[0] : $this->nextcloudVersion;
 	}
 
 	/**
@@ -1610,7 +2472,12 @@ class FeatureContext implements Context {
 			$client = new Client($this->clientOptions);
 			$response = $client->get(
 				$loginUrl,
-				['cookies' => $this->cookieJars[$user]]
+				[
+					'cookies' => $this->cookieJars[$user],
+					'headers' => [
+						'Origin' => $this->baseUrl,
+					],
+				],
 			);
 			$requestToken = substr(preg_replace('/(.*)data-requesttoken="(.*)">(.*)/sm', '\2', $response->getBody()->getContents()), 0, 89);
 
@@ -1625,6 +2492,9 @@ class FeatureContext implements Context {
 						'requesttoken' => $requestToken,
 					],
 					'cookies' => $this->cookieJars[$user],
+					'headers' => [
+						'Origin' => $this->baseUrl,
+					],
 				]
 			);
 			$this->assertStatusCode(200);
@@ -1646,9 +2516,9 @@ class FeatureContext implements Context {
 	}
 
 	private function getParentId(int $collectiveId, string $parentPath): int {
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/_pages');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/pages');
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $page) {
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
 			$path = $page['filePath'] ? $page['filePath'] . '/' . $page['fileName'] : $page['fileName'];
 			if ($parentPath === $path) {
 				return $page['id'];
@@ -1658,12 +2528,12 @@ class FeatureContext implements Context {
 	}
 
 	private function getShareToken(int $collectiveId, int $pageId = 0): ?string {
-		$this->sendRequest('GET', '/apps/collectives/_api/' . $collectiveId . '/shares');
+		$this->sendOcsCollectivesRequest('GET', 'collectives/' . $collectiveId . '/shares');
 		if ($this->response->getStatusCode() !== 200) {
 			throw new RuntimeException('Unable to get list of collectives');
 		}
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $share) {
+		foreach ($jsonBody['ocs']['data'] as $share) {
 			if ($collectiveId === $share['collectiveId'] && $pageId === $share['pageId']) {
 				return $share['token'];
 			}
@@ -1684,7 +2554,7 @@ class FeatureContext implements Context {
 	private function assertCollectiveByName(string $name, ?bool $revert = false): void {
 		$jsonBody = $this->getJson();
 		$collectiveNames = [];
-		foreach ($jsonBody['data'] as $collective) {
+		foreach ($jsonBody['ocs']['data']['collectives'] as $collective) {
 			$collectiveNames[] = $collective['name'];
 		}
 		if ($revert === false) {
@@ -1694,10 +2564,9 @@ class FeatureContext implements Context {
 		}
 	}
 
-
 	private function assertCollectiveKeyValue(string $name, string $key, string $value, ?bool $revert = false): void {
 		$jsonBody = $this->getJson();
-		foreach ($jsonBody['data'] as $c) {
+		foreach ($jsonBody['ocs']['data']['collectives'] as $c) {
 			if ($c['name'] === $name) {
 				$collective = $c;
 			}
@@ -1708,20 +2577,20 @@ class FeatureContext implements Context {
 		}
 
 		if ($revert === false) {
-			Assert::assertEquals($value, $collective[$key]);
+			Assert::assertEquals($value, json_encode($collective[$key]));
 		} else {
 			Assert::assertNotEquals($value, $collective[$key]);
 		}
 	}
 
 	private function assertCollectiveLevel(string $name, int $level): void {
-		$data = $this->getJson()['data'];
+		$data = $this->getJson()['ocs']['data'];
 		// Dirty hack. We don't know whether $data contains the collective (e.g. after collective#create)
 		// or an array of collectives (e.g. after collectives#index or publicCollectives#get)
-		if (array_key_exists(0, $data) && !array_key_exists('name', $data)) {
-			$collective = $data[0];
+		if (array_key_exists('collective', $data)) {
+			$collective = $data['collective'];
 		} else {
-			$collective = $data;
+			$collective = $data['collectives'][0];
 		}
 		Assert::assertEquals($name, $collective['name']);
 		Assert::assertEquals($level, $collective['level']);
@@ -1730,7 +2599,7 @@ class FeatureContext implements Context {
 	private function assertPageByPath(string $path, ?bool $revert = false): void {
 		$jsonBody = $this->getJson();
 		$pagePaths = [];
-		foreach ($jsonBody['data'] as $page) {
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
 			$pagePaths[] = $page['filePath'] ? $page['filePath'] . '/' . $page['fileName'] : $page['fileName'];
 		}
 		if ($revert === false) {
@@ -1740,9 +2609,9 @@ class FeatureContext implements Context {
 		}
 	}
 
-	private function assertPageKeyValue(int $id, string $key, mixed $value, ?bool $revert = false): void {
+	private function assertPageKeyValue(int $id, string $key, mixed $value, bool $revert = false): void {
 		$jsonBody = $this->getJson();
-		$page = $jsonBody['data'];
+		$page = $jsonBody['ocs']['data']['page'];
 
 		if (!isset($page)) {
 			throw new RuntimeException('Unable to find page with ID ' . $id);
@@ -1758,7 +2627,7 @@ class FeatureContext implements Context {
 	private function assertPageLastEditedByUser(string $title, string $user): void {
 		$jsonBody = $this->getJson();
 		$pageTitles = [];
-		foreach ($jsonBody['data'] as $page) {
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
 			if ($page['lastUserId'] === $user) {
 				$pageTitles[] = $page['title'];
 			}
@@ -1766,18 +2635,136 @@ class FeatureContext implements Context {
 		Assert::assertContains($title, $pageTitles);
 	}
 
-	private function assertAttachment(string $name, string $mimetype): void {
+	private function assertAttachment(string $name, ?string $mimetype = null, string $type = 'text', bool $revert = false): void {
 		$jsonBody = $this->getJson();
 		$attachment = [
 			'name' => $name,
-			'mimetype' => $mimetype,
+			'type' => $type,
 		];
+		if ($mimetype) {
+			$attachment['mimetype'] = $mimetype;
+		}
 
-		$pageAttachments = array_map(static fn ($attachment) => [
-			'name' => $attachment['name'],
-			'mimetype' => $attachment['mimetype'],
-		], $jsonBody['data']);
+		$pageAttachments = array_map(static function ($attachment) use ($mimetype) {
+			$attachment = [
+				'name' => $attachment['name'],
+				'type' => $attachment['type'],
+			];
+			if ($mimetype) {
+				$attachment['mimetype'] = $mimetype;
+			}
+			return $attachment;
+		}, $jsonBody['ocs']['data']['attachments']);
 
-		Assert::assertContains($attachment, $pageAttachments);
+		if ($revert === false) {
+			Assert::assertContains($attachment, $pageAttachments);
+		} else {
+			Assert::assertNotContains($attachment, $pageAttachments);
+		}
+	}
+
+	#[\Behat\Step\When('user :user waits for :seconds seconds')]
+	public function userWaitsForSeconds(string $user, int $seconds): void {
+		sleep($seconds);
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user searches recent pages with query :query')]
+	public function userSearchesRecentPages(string $user, string $query): void {
+		$this->setCurrentUser($user);
+		$this->sendOcsCollectivesRequest('GET', 'collectives/search/recent?query=' . urlencode($query));
+		$this->assertStatusCode(200);
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('user :user searches recent pages with query :query and limit :limit')]
+	public function userSearchesRecentPagesWithLimit(string $user, string $query, int $limit): void {
+		$this->setCurrentUser($user);
+		$this->sendOcsCollectivesRequest('GET', 'collectives/search/recent?query=' . urlencode($query) . '&limit=' . $limit);
+		$this->assertStatusCode(200);
+	}
+
+	#[\Behat\Step\Then('user :user sees :count search results')]
+	public function userSeesSearchResultCount(string $user, int $count): void {
+		$this->setCurrentUser($user);
+		$jsonBody = $this->getJson();
+		Assert::assertCount($count, $jsonBody['ocs']['data']['pages'], "Expected $count search results but got " . count($jsonBody['ocs']['data']['pages']));
+	}
+
+	#[\Behat\Step\Then('user :user sees page :title in search results')]
+	public function userSeesPageInResults(string $user, string $title): void {
+		$this->setCurrentUser($user);
+		$this->assertPageInSearchResults($title, false);
+	}
+
+	#[\Behat\Step\Then('user :user doesn\'t see page :title in search results')]
+	public function userDoesntSeePageInResults(string $user, string $title): void {
+		$this->setCurrentUser($user);
+		$this->assertPageInSearchResults($title, true);
+	}
+
+	#[\Behat\Step\Then('the first search result is page :title')]
+	public function firstResultIsPage(string $title): void {
+		$jsonBody = $this->getJson();
+		Assert::assertGreaterThan(0, count($jsonBody['ocs']['data']['pages']), 'No search results found');
+		Assert::assertEquals($title, $jsonBody['ocs']['data']['pages'][0]['title'], 'First result does not match expected page title');
+	}
+
+	private function assertPageInSearchResults(string $title, bool $revert = false): void {
+		$jsonBody = $this->getJson();
+		$found = false;
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
+			if ($page['title'] === $title) {
+				$found = true;
+				break;
+			}
+		}
+		if ($revert) {
+			Assert::assertFalse($found, "Page '$title' found in search results but shouldn't be");
+		} else {
+			Assert::assertTrue($found, "Page '$title' not found in search results");
+		}
+	}
+
+	#[\Behat\Step\Then('user :user sees page :title with collectiveName :collective in search results')]
+	public function userSeesPageWithCollectiveName(string $user, string $title, string $collective): void {
+		$this->setCurrentUser($user);
+		$jsonBody = $this->getJson();
+		$found = false;
+		foreach ($jsonBody['ocs']['data']['pages'] as $page) {
+			if ($page['title'] === $title && $page['collectiveNameWithEmoji'] === $collective) {
+				$found = true;
+				break;
+			}
+		}
+		Assert::assertTrue($found, "Page '$title' with collectiveName '$collective' not found in results");
+	}
+
+	/**
+	 * @throws GuzzleException
+	 */
+	#[\Behat\Step\When('anonymous searches :title in public page share :pageShare in collective :collective with owner :owner')]
+	public function anonymousSearchesInPublicShare(string $title, string $pageShare, string $collective, string $owner): void {
+		$this->setCurrentUser($owner);
+		$collectiveId = $this->collectiveIdByName($collective);
+		$pageShareId = $this->pageIdByName($collectiveId, $pageShare);
+		$token = $this->getShareToken($collectiveId, $pageShareId);
+		$this->sendOcsCollectivesRequest('GET', 'p/collectives/' . $token . '/search?searchString=' . urlencode($title), null, null, [], false);
+		$this->assertStatusCode(200);
+	}
+
+	#[\Behat\Step\Then('anonymous sees page :title in search results')]
+	public function anonymousSeesPageInResults(string $title): void {
+		$this->assertPageInSearchResults($title, false);
+	}
+
+	#[\Behat\Step\When('occ command :command is run')]
+	public function runOccCommand(string $command): void {
+		exec($this->occPath . ' ' . escapeshellcmd($command), $output, $returnCode);
+		Assert::assertEquals(0, $returnCode, 'OCC command failed: ' . implode('\n', $output));
 	}
 }

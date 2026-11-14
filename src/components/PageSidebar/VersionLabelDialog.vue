@@ -1,0 +1,125 @@
+<!--
+  - SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<template>
+	<NcDialog
+		contentClasses="version-label-modal"
+		isForm
+		:open
+		size:normal
+		:name="t('collectives', 'Name this version')"
+		@update:open="$emit('update:open', $event)"
+		@submit="$emit('labelUpdate', editedVersionLabel)">
+		<NcTextField
+			ref="labelInput"
+			v-model="editedVersionLabel"
+			class="version-label-modal__input"
+			:label="t('collectives', 'Version name')"
+			:placeholder="t('collectives', 'Version name')" />
+
+		<p class="version-label-modal__info">
+			{{ t('collectives', 'Named versions are persisted, and excluded from automatic cleanups when your storage quota is full.') }}
+		</p>
+
+		<template #actions>
+			<NcButton
+				v-if="versionLabel"
+				variant="error"
+				type="reset"
+				:aria-label="t('collectives', 'Remove version name')"
+				@click="$emit('labelUpdate', '')">
+				{{ t('collectives', 'Remove version name') }}
+			</NcButton>
+			<NcButton
+				variant="primary"
+				type="submit"
+				:aria-label="t('collectives', 'Save version name')"
+				:disabled="editedVersionLabel.trim() === ''">
+				<template #icon>
+					<CheckIcon :size="22" />
+				</template>
+				{{ t('collectives', 'Save version name') }}
+			</NcButton>
+		</template>
+	</NcDialog>
+</template>
+
+<script>
+import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/components/NcButton'
+import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
+import CheckIcon from 'vue-material-design-icons/Check.vue'
+
+export default {
+	name: 'VersionLabelDialog',
+
+	components: {
+		CheckIcon,
+		NcButton,
+		NcDialog,
+		NcTextField,
+	},
+
+	props: {
+		open: {
+			type: Boolean,
+			default: false,
+		},
+
+		versionLabel: {
+			type: String,
+			default: '',
+		},
+	},
+
+	emits: [
+		'labelUpdate',
+		'update:open',
+	],
+
+	data() {
+		return {
+			editedVersionLabel: '',
+		}
+	},
+
+	watch: {
+		versionLabel: {
+			immediate: true,
+			handler(label) {
+				this.editedVersionLabel = label ?? ''
+			},
+		},
+
+		open: {
+			immediate: true,
+			handler(open) {
+				if (open) {
+					this.$nextTick(() => (this.$refs.labelInput).focus())
+				}
+				this.editedVersionLabel = this.versionLabel
+			},
+		},
+	},
+
+	methods: {
+		t,
+	},
+}
+</script>
+
+<style scoped lang="scss">
+.version-label-modal {
+	&__info {
+		color: var(--color-text-maxcontrast);
+		margin-block: calc(3 * var(--default-grid-baseline));
+	}
+
+	&__input {
+		margin-block-start: calc(2 * var(--default-grid-baseline));
+	}
+}
+</style>

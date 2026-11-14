@@ -1,113 +1,143 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<div class="member-picker">
 		<!-- Search -->
-		<NcTextField ref="memberSearch"
-			:value.sync="searchQuery"
+		<NcTextField
+			ref="memberSearch"
+			v-model="searchQuery"
 			type="text"
-			:show-trailing-button="isSearching"
+			:showTrailingButton="hasSearchQuery"
 			:label="t('collectives', 'Search accounts, groups, teams')"
-			@trailing-button-click="clearSearch"
-			@input="onSearch">
+			@trailingButtonClick="clearSearch"
+			@update:modelValue="onSearch">
 			<MagnifyIcon :size="16" />
 		</NcTextField>
 
-		<div class="member-picker-list">
+		<div ref="memberPickerList" class="member-picker-list">
 			<!-- Current members (optional) -->
 			<SkeletonLoading v-if="showCurrentSkeleton" type="members-list" :count="3" />
-			<CurrentMembers v-else-if="showCurrent"
-				:circle-id="circleId"
-				:current-members="currentMembers"
-				:search-query="searchQuery"
-				:current-user-is-admin="currentUserIsAdmin" />
+			<CurrentMembers
+				v-else-if="showCurrent"
+				:circleId
+				:currentMembers
+				:searchQuery
+				:currentUserIsAdmin />
 
 			<!-- Selected members (optional) -->
-			<SelectedMembers v-if="currentUserIsAdmin && !showCurrentSkeleton && showSelection"
-				:selected-members="selectedMembers"
-				:no-delete-members="noDeleteMembers"
-				@delete-from-selection="deleteFromSelection" />
+			<SelectedMembers
+				v-if="currentUserIsAdmin && !showCurrentSkeleton && showSelection"
+				:selectedMembers
+				:noDeleteMembers
+				@deleteFromSelection="deleteFromSelection" />
 
 			<!-- Searched and picked members -->
-			<MemberSearchResults v-if="currentUserIsAdmin && !showCurrentSkeleton && hasSearchResults"
-				:circle-id="circleId"
-				:search-results="filteredSearchResults"
-				:selection-set="selectedMembers"
-				:on-click-searched="onClickSearched" />
+			<MemberSearchResults
+				v-if="currentUserIsAdmin && !showCurrentSkeleton && hasSearchResults"
+				:circleId
+				:searchResults="filteredSearchResults"
+				:selectionSet="selectedMembers"
+				:onClickSearched />
 
 			<!-- No search results -->
 			<template v-else-if="currentUserIsAdmin && !showCurrentSkeleton">
 				<NcAppNavigationCaption class="member-picker-caption" :name="t('collectives', 'Add accounts, groups or teams')" />
-				<Hint v-if="!isSearching" :hint="t('collectives', 'Search for members to add.')" />
-				<Hint v-else-if="isSearchLoading" :hint="t('collectives', 'Loading…')" />
-				<Hint v-else :hint="t('collectives', 'No search results')" />
+				<MembersHint v-if="!searchWithoutQuery && !hasSearchQuery" :hint="t('collectives', 'Search for members to add.')" />
+				<MembersHint v-else-if="isSearchLoading" :hint="t('collectives', 'Loading…')" />
+				<MembersHint v-else :hint="t('collectives', 'No search results')" />
 			</template>
 		</div>
 	</div>
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
 import axios from '@nextcloud/axios'
-import debounce from 'debounce'
-import { autocompleteSourcesToCircleMemberTypes, circlesMemberTypes, shareTypes } from '../../constants.js'
-import { generateOcsUrl } from '@nextcloud/router'
 import { showError } from '@nextcloud/dialogs'
-import { NcAppNavigationCaption, NcTextField } from '@nextcloud/vue'
-import CurrentMembers from './CurrentMembers.vue'
+import { emit } from '@nextcloud/event-bus'
+import { t } from '@nextcloud/l10n'
+import { generateOcsUrl } from '@nextcloud/router'
+import debounce from 'debounce'
+import NcAppNavigationCaption from '@nextcloud/vue/components/NcAppNavigationCaption'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
 import MagnifyIcon from 'vue-material-design-icons/Magnify.vue'
-import Hint from './Hint.vue'
-import MemberSearchResults from './MemberSearchResults.vue'
-import SelectedMembers from './SelectedMembers.vue'
 import SkeletonLoading from '../SkeletonLoading.vue'
+import CurrentMembers from './CurrentMembers.vue'
+import MemberSearchResults from './MemberSearchResults.vue'
+import MembersHint from './MembersHint.vue'
+import SelectedMembers from './SelectedMembers.vue'
+import { popCtrlF, pushCtrlF } from '../../composables/useKeymap.ts'
+import { autocompleteSourcesToCircleMemberTypes, circlesMemberTypes, shareTypes } from '../../constants.js'
+import { circleMemberType } from '../../util/circles.ts'
 
 export default {
 	name: 'MemberPicker',
 
 	components: {
-		NcAppNavigationCaption,
 		CurrentMembers,
-		Hint,
 		MagnifyIcon,
 		MemberSearchResults,
+		MembersHint,
+		NcAppNavigationCaption,
 		NcTextField,
 		SelectedMembers,
 		SkeletonLoading,
 	},
 
 	props: {
+		isLoading: {
+			type: Boolean,
+			default: false,
+		},
+
+		searchWithoutQuery: {
+			type: Boolean,
+			default: false,
+		},
+
 		circleId: {
 			type: String,
 			default: null,
 		},
+
 		currentUserIsAdmin: {
 			type: Boolean,
-			default: true,
+			required: true,
 		},
+
 		showCurrent: {
 			type: Boolean,
 			default: false,
 		},
+
 		showSelection: {
 			type: Boolean,
 			default: false,
 		},
+
 		currentMembers: {
 			type: Array,
 			default() {
 				return []
 			},
 		},
+
 		selectedMembers: {
 			type: Object,
 			default() {
 				return {}
 			},
 		},
+
 		noDeleteMembers: {
 			type: Array,
 			default() {
 				return []
 			},
 		},
+
 		onClickSearched: {
 			type: Function,
 			default() {
@@ -116,20 +146,22 @@ export default {
 		},
 	},
 
+	emits: [
+		'deleteFromSelection',
+	],
+
 	data() {
 		return {
 			searchQuery: '',
 			searchResults: [],
 			isSearchLoading: false,
+			fetchSearchResultsDebounced: debounce(this.fetchSearchResults, 250),
+			onScrollDebounced: debounce(this.onScroll, 1000, { immediate: true }),
 		}
 	},
 
 	computed: {
-		...mapGetters([
-			'circleMemberType',
-		]),
-
-		isSearching() {
+		hasSearchQuery() {
 			return this.searchQuery !== ''
 		},
 
@@ -142,7 +174,7 @@ export default {
 		},
 
 		showCurrentSkeleton() {
-			return this.showCurrent && this.currentMembers.length === 0
+			return this.showCurrent && (this.currentMembers.length === 0 || this.isLoading)
 		},
 	},
 
@@ -150,21 +182,29 @@ export default {
 		this.$nextTick(() => {
 			this.$refs.memberSearch.$el.getElementsByTagName('input')[0]?.focus()
 		})
+		if (this.searchWithoutQuery) {
+			this.fetchSearchResultsDebounced()
+		}
+		this.$refs.memberPickerList.addEventListener('scroll', this.onScrollDebounced)
+
+		pushCtrlF(this.$refs.memberSearch)
+	},
+
+	beforeUnmount() {
+		this.$refs.memberPickerList.removeEventListener('scroll', this.onScrollDebounced)
+		popCtrlF(this.$refs.memberSearch)
 	},
 
 	methods: {
+		t,
+
 		clearSearch() {
 			this.searchQuery = ''
 			this.searchResults = []
 		},
 
-		debounceFetchSearchResults: debounce(function() {
-			if (this.isSearching) {
-				this.fetchSearchResults()
-			}
-		}, 250),
-
 		async fetchSearchResults() {
+			this.isSearchLoading = true
 			// Search for users, groups and teams
 			const searchShareTypes = [shareTypes.TYPE_USER, shareTypes.TYPE_GROUP, shareTypes.TYPE_CIRCLE]
 
@@ -177,38 +217,42 @@ export default {
 						shareTypes: searchShareTypes,
 					},
 				})
-				this.isSearchLoading = false
-
 				this.searchResults = response.data.ocs.data
 			} catch (e) {
 				console.error(e)
 				showError(t('collectives', 'An error occurred while performing the search'))
+			} finally {
 				this.isSearchLoading = false
 			}
 		},
 
 		// Filter out team itself and current members
 		filterSearchResults(item) {
-			return !this.currentMembers.find(m => {
+			return !this.currentMembers.find((m) => {
 				return (item.source === 'circlesx' && item.id === this.circleId)
-					|| (this.circleMemberType(m) === circlesMemberTypes[autocompleteSourcesToCircleMemberTypes[item.source]]
+					|| (circleMemberType(m) === circlesMemberTypes[autocompleteSourcesToCircleMemberTypes[item.source]]
 						&& m.displayName === item.label)
 			})
 		},
 
 		deleteFromSelection(member) {
-			this.$emit('delete-from-selection', member)
+			this.$emit('deleteFromSelection', member)
 		},
 
-		onSearch() {
+		onSearch(searchQuery) {
 			// Don't search for new members if not admin
 			if (!this.currentUserIsAdmin) {
 				return
 			}
 
 			this.searchResults = []
-			this.isSearchLoading = true
-			this.debounceFetchSearchResults()
+			if (this.searchWithoutQuery || searchQuery) {
+				this.fetchSearchResultsDebounced()
+			}
+		},
+
+		onScroll() {
+			emit('collectives:member-picker:scroll')
 		},
 	},
 }

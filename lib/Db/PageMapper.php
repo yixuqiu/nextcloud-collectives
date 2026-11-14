@@ -2,30 +2,34 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Db;
 
 use OCP\AppFramework\Db\DoesNotExistException;
-use OCP\AppFramework\Db\Entity;
 use OCP\AppFramework\Db\MultipleObjectsReturnedException;
 use OCP\AppFramework\Db\QBMapper;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 
 /**
- * @method Page insert(Entity $page)
- * @method Page update(Entity $page)
- * @method Page delete(Entity $page)
+ * @method Page insert(Page $page)
+ * @method Page update(Page $page)
+ * @method Page delete(Page $page)
  * @method Page findEntity(IQueryBuilder $query)
  * @template-extends QBMapper<Page>
  */
 class PageMapper extends QBMapper {
-	public function __construct(IDBConnection $db, ?string $entityClass = null) {
-		parent::__construct($db, 'collectives_pages', $entityClass);
+	public function __construct(IDBConnection $db) {
+		parent::__construct($db, 'collectives_pages', Page::class);
 	}
 
 	public function updateOrInsert(Page $page): Page {
-		if ($page->getId() === null &&
-			null !== $oldPage = $this->findByFileId($page->getFileId())) {
+		if ($page->getId() === null
+			&& null !== $oldPage = $this->findByFileId($page->getFileId())) {
 			$page->setId($oldPage->getId());
 			return $this->update($page);
 		}
@@ -58,21 +62,54 @@ class PageMapper extends QBMapper {
 
 	public function findByFileId(int $fileId, bool $trashed = false): ?Page {
 		$qb = $this->db->getQueryBuilder();
-		$where = $qb->expr()->andX();
-		$where->add($qb->expr()->eq('file_id', $qb->createNamedParameter($fileId, IQueryBuilder::PARAM_INT)));
+		$andX = [
+			$qb->expr()->eq('file_id', $qb->createNamedParameter($fileId, IQueryBuilder::PARAM_INT)),
+		];
 		if ($trashed) {
-			$where->add($qb->expr()->isNotNull('trash_timestamp'));
+			$andX[] = $qb->expr()->isNotNull('trash_timestamp');
 		} else {
-			$where->add($qb->expr()->isNull('trash_timestamp'));
+			$andX[] = $qb->expr()->isNull('trash_timestamp');
 		}
 		$qb->select('*')
 			->from($this->tableName)
-			->where($where);
+			->where($qb->expr()->andX(...$andX));
 		try {
 			return $this->findEntity($qb);
-		} catch (DoesNotExistException | MultipleObjectsReturnedException) {
+		} catch (DoesNotExistException|MultipleObjectsReturnedException) {
 			return null;
 		}
+	}
+
+	/**
+	 * @param int[] $fileIds
+	 * @return array<int, Page> Indexed by file_id
+	 */
+	public function findByFileIds(array $fileIds, bool $trashed = false): array {
+		if (empty($fileIds)) {
+			return [];
+		}
+
+		$pagesByFileId = [];
+		foreach (array_chunk($fileIds, 1000) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('*')
+				->from($this->tableName)
+				->where($qb->expr()->in('file_id',
+					$qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)));
+
+			if ($trashed) {
+				$qb->andWhere($qb->expr()->isNotNull('trash_timestamp'));
+			} else {
+				$qb->andWhere($qb->expr()->isNull('trash_timestamp'));
+			}
+
+			$pages = $this->findEntities($qb);
+			foreach ($pages as $page) {
+				$pagesByFileId[$page->getFileId()] = $page;
+			}
+		}
+
+		return $pagesByFileId;
 	}
 
 	/**

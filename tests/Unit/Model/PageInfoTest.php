@@ -1,12 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace Unit\Model;
 
 use OC\Files\Mount\MountPoint;
 use OCA\Collectives\Model\PageInfo;
 use OCP\Files\File;
 use OCP\Files\Folder;
-use PHPUnit\Framework\TestCase;
+use Test\TestCase;
 
 class PageInfoTest extends TestCase {
 	public function testFromFile(): void {
@@ -15,8 +22,8 @@ class PageInfoTest extends TestCase {
 		$fileMTime = 0;
 		$fileSize = 100;
 		$fileName = 'name.md';
-		$fileMountPoint = '/files/user/Collectives/collective/';
-		$fileCollectivePath = 'Collectives/collective';
+		$fileMountPoint = '/files/user/.Collectives/collective/';
+		$fileCollectivePath = '.Collectives/collective';
 		$parentInternalPath = 'path/to/file';
 		$internalPath = $parentInternalPath . '/' . $fileName;
 		$userId = 'jane';
@@ -51,6 +58,7 @@ class PageInfoTest extends TestCase {
 		self::assertEquals($fileSize, $pageInfo->getSize());
 		self::assertEquals($fileName, $pageInfo->getFileName());
 		self::assertEquals($parentInternalPath, $pageInfo->getFilePath());
+		self::assertEquals('path - to', $pageInfo->getFilePathString());
 		self::assertEquals($fileCollectivePath, $pageInfo->getCollectivePath());
 	}
 }

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 Feature: publicPageShare
 
   Scenario: Create and share a single page publicly (read-only)
@@ -15,8 +18,15 @@ Feature: publicPageShare
     Then anonymous sees public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
     And anonymous sees pagePath "Readme.md" in public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
 
+  @no-encryption
+  Scenario: Search a subpage in a shared page (read-only)
+    When user "jane" sets content of file "sharefolderpage/subpage.md" to "subpage" in collective "BehatPublicPageCollective"
+    And occ command "collectives:index" is run
+    And anonymous searches "subpage" in public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
+    Then anonymous sees page "subpage" in search results
+
   Scenario: Upload and list attachment for page
-    When user "jane" uploads attachment "test.png" to "subpage" with file path "/sharefolderpage/" in "BehatPublicPageCollective"
+    When user "jane" uploads attachment "test.png" via webdav to "subpage" with file path "/sharefolderpage/" in "BehatPublicPageCollective"
     Then anonymous sees attachment "test.png" with mimetype "image/png" for "subpage" in public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
 
   Scenario: Fail to share a page if sharing permissions are missing
@@ -48,6 +58,11 @@ Feature: publicPageShare
   Scenario: Fail to trash page in editable shared page
     Then anonymous fails to trash page "subpage" in public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
 
+  Scenario: Fail to create page from template in editable shared page
+    When user "jane" creates template "newtemplate" in "BehatPublicPageCollective"
+    Then anonymous fails to create page "anotherpage" with parentPath "sharefolderpage/Readme.md" from template "newtemplate" in public page share "sharefolderpage" in collective "BehatPublicPageCollective" with owner "jane"
+
+
   Scenario: Fail to create page in editable shared page if share owner misses editing permissions
     When user "jane" sets "share" level in collective "BehatPublicPageCollective" to "Member"
     And user "john" creates public page share for page "sharefolderpage" in "BehatPublicPageCollective"
@@ -62,5 +77,4 @@ Feature: publicPageShare
     Then anonymous fails to see public share with stored token
 
   Scenario: Trash and delete collective and team with all remaining pages
-    Then user "jane" trashes collective "BehatPublicPageCollective"
-    And user "jane" deletes collective+team "BehatPublicPageCollective"
+    Then user "jane" trashes and deletes collective "BehatPublicPageCollective"

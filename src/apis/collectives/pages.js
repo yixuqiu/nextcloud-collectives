@@ -1,13 +1,53 @@
+/**
+ * SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 import axios from '@nextcloud/axios'
-import { pagesUrl } from './urls.js'
+import { apiUrl } from './urls.js'
+
+/**
+ * URL for the pages API inside the given context.
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {...string} parts - URL parts to append - will be joined with `/`
+ */
+function pagesApiUrl(context, ...parts) {
+	return context.isPublic
+		? apiUrl('v1.0', 'p', 'collectives', context.shareTokenParam, 'pages', ...parts)
+		: apiUrl('v1.0', 'collectives', context.collectiveId, 'pages', ...parts)
+}
+
+/**
+ * URL for the page trash API
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {...string} parts - URL parts to append - will be joined with `/`
+ */
+function pagesTrashApiUrl(context, ...parts) {
+	return pagesApiUrl(context, 'trash', ...parts)
+}
+
+/**
+ * URL for the page search API
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {...string} parts - URL parts to append - will be joined with `/`
+ */
+function searchApiUrl(context, ...parts) {
+	return context.isPublic
+		? apiUrl('v1.0', 'p', 'collectives', context.shareTokenParam, 'search', ...parts)
+		: apiUrl('v1.0', 'collectives', context.collectiveId, 'search', ...parts)
+}
 
 /**
  * Get all pages in the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
+ * @param {object} config - optional axios request config, e.g. an abort `signal`
  */
-export function getPages(context) {
-	return axios.get(pagesUrl(context))
+export function getPages(context, config = {}) {
+	return axios.get(pagesApiUrl(context), config)
 }
 
 /**
@@ -16,7 +56,7 @@ export function getPages(context) {
  * @param {object} context - either the current collective or a share context
  */
 export function getTrashPages(context) {
-	return axios.get(pagesUrl(context, 'trash'))
+	return axios.get(pagesTrashApiUrl(context))
 }
 
 /**
@@ -27,7 +67,7 @@ export function getTrashPages(context) {
  */
 export function createPage(context, page) {
 	return axios.post(
-		pagesUrl(context, page.parentId),
+		pagesApiUrl(context, page.parentId),
 		page,
 	)
 }
@@ -36,32 +76,32 @@ export function createPage(context, page) {
  * Get a page in the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to retrieve
+ * @param {number} pageId - ID of the page to retrieve
  */
 export function getPage(context, pageId) {
-	return axios.get(pagesUrl(context, pageId))
+	return axios.get(pagesApiUrl(context, pageId))
 }
 
 /**
  * Touch a page in the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to touch
+ * @param {number} pageId - ID of the page to touch
  */
 export function touchPage(context, pageId) {
-	return axios.get(pagesUrl(context, pageId, '/touch'))
+	return axios.get(pagesApiUrl(context, pageId, 'touch'))
 }
 
 /**
  * Rename a page in the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to rename
+ * @param {number} pageId - ID of the page to rename
  * @param {string} title - New title for the page
  */
 export function renamePage(context, pageId, title) {
 	return axios.put(
-		pagesUrl(context, pageId),
+		pagesApiUrl(context, pageId),
 		{ title },
 	)
 }
@@ -70,13 +110,13 @@ export function renamePage(context, pageId, title) {
  * Copy a page inside the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to copy
- * @param {number} parentId - Id of the page to copy to
+ * @param {number} pageId - ID of the page to copy
+ * @param {number} parentId - ID of the page to copy to
  * @param {number} index - Index for subpage order of parent page
  */
 export function copyPage(context, pageId, parentId, index) {
 	return axios.put(
-		pagesUrl(context, pageId),
+		pagesApiUrl(context, pageId),
 		{ parentId, index, copy: true },
 	)
 }
@@ -85,13 +125,13 @@ export function copyPage(context, pageId, parentId, index) {
  * Move a page inside the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to move
- * @param {number} parentId - Id of the page to move to
+ * @param {number} pageId - ID of the page to move
+ * @param {number} parentId - ID of the page to move to
  * @param {number} index - Index for subpage order of parent page
  */
 export function movePage(context, pageId, parentId, index) {
 	return axios.put(
-		pagesUrl(context, pageId),
+		pagesApiUrl(context, pageId),
 		{ parentId, index },
 	)
 }
@@ -100,14 +140,14 @@ export function movePage(context, pageId, parentId, index) {
  * Copy page to another collective
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to move
- * @param {number} collectiveId - Id of the new collective
- * @param {number} parentId - Id of the page to move to
+ * @param {number} pageId - ID of the page to move
+ * @param {number} collectiveId - ID of the new collective
+ * @param {number} parentId - ID of the page to move to
  * @param {number} index - Index for subpage order of parent page
  */
 export function copyPageToCollective(context, pageId, collectiveId, parentId, index) {
 	return axios.put(
-		pagesUrl(context, pageId, 'to', collectiveId),
+		pagesApiUrl(context, pageId, 'to', collectiveId),
 		{ parentId, index, copy: true },
 	)
 }
@@ -116,14 +156,14 @@ export function copyPageToCollective(context, pageId, collectiveId, parentId, in
  * Move page to another collective
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to move
- * @param {number} collectiveId - Id of the new collective
- * @param {number} parentId - Id of the page to move to
+ * @param {number} pageId - ID of the page to move
+ * @param {number} collectiveId - ID of the new collective
+ * @param {number} parentId - ID of the page to move to
  * @param {number} index - Index for subpage order of parent page
  */
 export function movePageToCollective(context, pageId, collectiveId, parentId, index) {
 	return axios.put(
-		pagesUrl(context, pageId, 'to', collectiveId),
+		pagesApiUrl(context, pageId, 'to', collectiveId),
 		{ parentId, index },
 	)
 }
@@ -132,13 +172,27 @@ export function movePageToCollective(context, pageId, collectiveId, parentId, in
  * Set emoji for a page
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to update
+ * @param {number} pageId - ID of the page to update
  * @param {string} emoji - New emojie for the page
  */
 export function setPageEmoji(context, pageId, emoji) {
 	return axios.put(
-		pagesUrl(context, pageId, 'emoji'),
+		pagesApiUrl(context, pageId, 'emoji'),
 		{ emoji },
+	)
+}
+
+/**
+ * Set full width for a page
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page to update
+ * @param {boolean} fullWidth - Full width for the page
+ */
+export function setFullWidth(context, pageId, fullWidth) {
+	return axios.put(
+		pagesApiUrl(context, pageId, 'fullWidth'),
+		{ fullWidth },
 	)
 }
 
@@ -146,62 +200,142 @@ export function setPageEmoji(context, pageId, emoji) {
  * Set subpageOrder for a page
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to update
+ * @param {number} pageId - ID of the page to update
  * @param {string} subpageOrder - New subpageOrdere for the page
  */
 export function setPageSubpageOrder(context, pageId, subpageOrder) {
 	return axios.put(
-		pagesUrl(context, pageId, 'subpageOrder'),
+		pagesApiUrl(context, pageId, 'subpageOrder'),
 		{ subpageOrder },
 	)
+}
+
+/**
+ * Add tag to a page
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page to update
+ * @param {number} tagId - ID of the tag to add
+ */
+export function addPageTag(context, pageId, tagId) {
+	return axios.put(pagesApiUrl(context, pageId, 'tags', tagId))
+}
+
+/**
+ * Remove tag from a page
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page to update
+ * @param {number} tagId - ID of the tag to remove
+ */
+export function removePageTag(context, pageId, tagId) {
+	return axios.delete(pagesApiUrl(context, pageId, 'tags', tagId))
 }
 
 /**
  * Trash a page in the given context (collective or public share)
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to trash
+ * @param {number} pageId - ID of the page to trash
  */
 export function trashPage(context, pageId) {
-	return axios.delete(pagesUrl(context, pageId))
+	return axios.delete(pagesApiUrl(context, pageId))
 }
 
 /**
  * Restore the page with the given id from trash
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to restore
+ * @param {number} pageId - ID of the page to restore
  */
 export function restorePage(context, pageId) {
-	return axios.patch(pagesUrl(context, '/trash', pageId))
+	return axios.patch(pagesTrashApiUrl(context, pageId))
 }
 
 /**
  * Delete the page with the given id from trash
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to trash
+ * @param {number} pageId - ID of the page to trash
  */
 export function deletePage(context, pageId) {
-	return axios.delete(pagesUrl(context, '/trash', pageId))
+	return axios.delete(pagesTrashApiUrl(context, pageId))
 }
 
 /**
  * Get list of attachments for a page
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to list attachments for
+ * @param {number} pageId - ID of the page to list attachments for
  */
 export function getPageAttachments(context, pageId) {
-	return axios.get(pagesUrl(context, pageId, 'attachments'))
+	return axios.get(pagesApiUrl(context, pageId, 'attachments'))
 }
 
 /**
- * Get list of backlinks for a page
+ * Upload attachment of a page
  *
  * @param {object} context - either the current collective or a share context
- * @param {number} pageId - Id of the page to list backlinks for
+ * @param {number} pageId - ID of the page that the attachment belongs to
+ * @param {string} formData - The formData containing the attachment
+ * @param {object|null} onUploadProgress - optional onUploadProgress callback
  */
-export function getPageBacklinks(context, pageId) {
-	return axios.get(pagesUrl(context, pageId, 'backlinks'))
+export function uploadAttachment(context, pageId, formData, onUploadProgress) {
+	return axios.post(
+		pagesApiUrl(context, pageId, 'attachments'),
+		formData,
+		{
+			headers: {
+				'Content-Type': 'multipart/form-data',
+			},
+			onUploadProgress,
+		},
+	)
+}
+
+/**
+ * Rename attachment of a page
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page that the attachment belongs to
+ * @param {number} attachmentId - ID of the attachment to rename
+ * @param {string} name - Target name of the attachment
+ */
+export function renameAttachment(context, pageId, attachmentId, name) {
+	return axios.put(
+		pagesApiUrl(context, pageId, 'attachments', attachmentId),
+		{ name },
+	)
+}
+
+/**
+ * Delete attachment of a page
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page that the attachment belongs to
+ * @param {number} attachmentId - ID of the attachment to delete
+ */
+export function deleteAttachment(context, pageId, attachmentId) {
+	return axios.delete(pagesApiUrl(context, pageId, 'attachments', attachmentId))
+}
+
+/**
+ * Restore attachment of a page from trash
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {number} pageId - ID of the page that the attachment belongs to
+ * @param {number} attachmentId - ID of the attachment to restore
+ */
+export function restoreAttachment(context, pageId, attachmentId) {
+	return axios.patch(pagesApiUrl(context, pageId, 'attachments/trash', attachmentId))
+}
+
+/**
+ * Perform index search on pages in given collective
+ *
+ * @param {object} context - either the current collective or a share context
+ * @param {string} searchString string to search for
+ */
+export function contentSearch(context, searchString) {
+	return axios.get(searchApiUrl(context), { params: { searchString } })
 }

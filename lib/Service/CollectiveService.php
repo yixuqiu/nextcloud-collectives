@@ -2,16 +2,21 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Service;
 
-use OC;
-use OC\Files\Node\File;
 use OCA\Circles\Model\Member;
 use OCA\Collectives\Db\Collective;
 use OCA\Collectives\Db\CollectiveMapper;
 use OCA\Collectives\Db\CollectiveUserSettingsMapper;
 use OCA\Collectives\Db\Page;
 use OCA\Collectives\Db\PageMapper;
+use OCA\Collectives\Db\TagMapper;
+use OCA\Collectives\Fs\NodeHelper;
 use OCA\Collectives\Model\PageInfo;
 use OCA\Collectives\Mount\CollectiveFolderManager;
 use OCA\Collectives\Trash\PageTrashBackend;
@@ -19,38 +24,45 @@ use OCA\Collectives\Versions\VersionsBackend;
 use OCP\App\IAppManager;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\Events\InvalidateMountCacheEvent;
+use OCP\Files\File;
 use OCP\Files\InvalidPathException;
 use OCP\Files\NotFoundException as FilesNotFoundException;
 use OCP\Files\NotPermittedException as FilesNotPermittedException;
 use OCP\IL10N;
+use OCP\Server;
+use Symfony\Component\String\Slugger\SluggerInterface;
 
 class CollectiveService extends CollectiveServiceBase {
 	private ?PageTrashBackend $pageTrashBackend = null;
 	private ?VersionsBackend $pageVersionsBackend = null;
 
 	public function __construct(
-		private IAppManager $appManager,
+		private readonly IAppManager $appManager,
 		CollectiveMapper $collectiveMapper,
-		private CollectiveHelper $collectiveHelper,
-		private CollectiveFolderManager $collectiveFolderManager,
+		private readonly CollectiveHelper $collectiveHelper,
+		private readonly CollectiveFolderManager $collectiveFolderManager,
 		CircleHelper $circleHelper,
-		private CollectiveShareService $shareService,
-		private CollectiveUserSettingsMapper $collectiveUserSettingsMapper,
-		private PageMapper $pageMapper,
-		private IL10N $l10n,
-		private IEventDispatcher $eventDispatcher) {
+		private readonly CollectiveShareService $shareService,
+		private readonly CollectiveUserSettingsMapper $collectiveUserSettingsMapper,
+		private readonly PageMapper $pageMapper,
+		private readonly TagMapper $tagMapper,
+		private readonly IL10N $l10n,
+		private readonly IEventDispatcher $eventDispatcher,
+		private readonly NodeHelper $nodeHelper,
+		private readonly SluggerInterface $slugger,
+	) {
 		parent::__construct($collectiveMapper, $circleHelper);
 	}
 
 	private function initPageTrashBackend(): void {
 		if ($this->appManager->isEnabledForUser('files_trashbin')) {
-			$this->pageTrashBackend = OC::$server->get(PageTrashBackend::class);
+			$this->pageTrashBackend = Server::get(PageTrashBackend::class);
 		}
 	}
 
 	private function initPageVersionsBackend(): void {
 		if ($this->appManager->isEnabledForUser('files_versions')) {
-			$this->pageVersionsBackend = OC::$server->get(VersionsBackend::class);
+			$this->pageVersionsBackend = Server::get(VersionsBackend::class);
 		}
 	}
 
@@ -65,6 +77,7 @@ class CollectiveService extends CollectiveServiceBase {
 			if ($collective->getId() === $share->getCollectiveId()) {
 				$collective->setShareToken($share->getToken());
 				$collective->setIsPageShare($share->getPageId() !== 0);
+				$collective->setSharePageId($share->getPageId());
 				$collective->setShareEditable($share->getEditable());
 			} else {
 				throw new NotFoundException('Share token does not match collective.');
@@ -91,6 +104,7 @@ class CollectiveService extends CollectiveServiceBase {
 	public function getCollectivesWithShares(string $userId): array {
 		$collectives = $this->collectiveHelper->getCollectivesForUser($userId);
 		foreach ($collectives as $c) {
+			$c->setCanLeave($this->circleHelper->canLeave($c->getCircleId(), $userId));
 			if (null !== $share = $this->shareService->findShare($userId, $c->getId(), 0)) {
 				$c->setShareToken($share->getToken());
 				$c->setShareEditable($share->getEditable());
@@ -123,11 +137,26 @@ class CollectiveService extends CollectiveServiceBase {
 		return end($collectives);
 	}
 
-	public function getCollectiveNameWithEmoji(Collective $collective): string {
-		$emoji = $collective->getEmoji();
-		return $emoji
-			? $emoji . ' ' . $collective->getName()
-			: $collective->getName();
+	/**
+	 * @throws MissingDependencyException
+	 * @throws NotFoundException
+	 * @throws NotPermittedException
+	 */
+	public function findCollectiveByShare(string $shareToken): Collective {
+		if (null === $share = $this->shareService->findShareByToken($shareToken, false)) {
+			throw new NotFoundException('Unable to find a collective from its share token');
+		}
+
+		if (null === $collective = $this->collectiveMapper->findByIdAndUser($share->getCollectiveId())) {
+			throw new NotFoundException('Unable to find a collective from its share token');
+		}
+
+		$circle = $this->circleHelper->getCircle($collective->getCircleId(), null, true);
+		$collective->setName($circle->getSanitizedName());
+		$collective->setShareToken($share->getToken());
+		$collective->setIsPageShare($share->getPageId() !== 0);
+		$collective->setSharePageId($share->getPageId());
+		return $collective;
 	}
 
 	/**
@@ -139,8 +168,10 @@ class CollectiveService extends CollectiveServiceBase {
 	 */
 	public function createCollective(string $userId,
 		string $userLang,
-		string $safeName,
+		string $name,
 		?string $emoji = null): array {
+		$safeName = $this->nodeHelper->sanitiseFilename($name);
+
 		if ($safeName === '') {
 			throw new UnprocessableEntityException('Empty collective name is not allowed');
 		}
@@ -172,23 +203,29 @@ class CollectiveService extends CollectiveServiceBase {
 			$this->eventDispatcher->dispatchTyped(new InvalidateMountCacheEvent(null));
 		}
 
-		// Create collective object
+		// Create a collective object
 		$collective = new Collective();
 		$collective->setCircleId($circle->getSingleId());
 		$collective->setPermissions(Collective::defaultPermissions);
 		if ($emoji) {
+			EmojiHelper::assertValid($emoji);
 			$collective->setEmoji($emoji);
 		}
 		$collective = $this->collectiveMapper->insert($collective);
 
-		// Decorate collective object
+		$slug = $this->slugger->slug($name)->toString();
+		$collective->setSlug($slug);
+		$this->collectiveMapper->update($collective);
+
+		// Decorate a collective object
 		$collective->setName($circle->getSanitizedName());
 		$collective->setLevel($this->circleHelper->getLevel($circle->getSingleId(), $userId));
 
 		// Create folder for collective and optionally copy default landing page
 		try {
-			$collectiveFolder = $this->collectiveFolderManager->initializeFolder($collective->getId(), $userLang);
-		} catch (InvalidPathException | FilesNotPermittedException $e) {
+			$name = CollectiveHelper::getCollectiveNameWithEmoji($collective);
+			$collectiveFolder = $this->collectiveFolderManager->initializeFolder($collective->getId(), $userLang, $name);
+		} catch (InvalidPathException|FilesNotPermittedException $e) {
 			throw new NotPermittedException($e->getMessage(), 0, $e);
 		}
 
@@ -203,7 +240,7 @@ class CollectiveService extends CollectiveServiceBase {
 			$page->setFileId($file->getId());
 			$page->setLastUserId($userId);
 			$this->pageMapper->updateOrInsert($page);
-		} catch (FilesNotFoundException | InvalidPathException $e) {
+		} catch (FilesNotFoundException|InvalidPathException $e) {
 			throw new NotFoundException($e->getMessage(), 0, $e);
 		}
 
@@ -227,6 +264,7 @@ class CollectiveService extends CollectiveServiceBase {
 		if ($emoji === '') {
 			$collective->setEmoji(null);
 		} elseif ($emoji) {
+			EmojiHelper::assertValid($emoji);
 			$collective->setEmoji($emoji);
 		}
 
@@ -299,18 +337,36 @@ class CollectiveService extends CollectiveServiceBase {
 	 */
 	public function deleteCollective(int $id, string $userId, bool $deleteCircle): Collective {
 		$collective = $this->getCollectiveFromTrash($id, $userId);
+		$circleId = $collective->getCircleId();
 
-		if ($deleteCircle) {
-			$this->circleHelper->destroyCircle($collective->getCircleId(), $userId);
-		} else {
-			$this->circleHelper->unflagCircleAsAppManaged($collective->getCircleId());
+		// Check permission up front to not purge the collective and then fail to destroy the team
+		if ($deleteCircle && !$this->circleHelper->isOwner($circleId, $userId)) {
+			throw new NotPermittedException('Not allowed to destroy team ' . $circleId);
 		}
 
+		// Purge before touching the team: the collective can only be found in trash while its team exists.
+		$collective = $this->purgeCollective($collective);
+
+		if ($deleteCircle) {
+			$this->circleHelper->destroyCircle($circleId, $userId);
+		} else {
+			$this->circleHelper->unflagCircleAsAppManaged($circleId);
+		}
+
+		return $collective;
+	}
+
+	/**
+	 * @throws NotFoundException
+	 */
+	public function purgeCollective(Collective $collective): Collective {
 		// Delete collective folder and its contents
 		try {
 			$collectiveFolder = $this->collectiveFolderManager->getFolder($collective->getId());
 			$collectiveFolder->delete();
-		} catch (InvalidPathException | FilesNotFoundException | FilesNotPermittedException $e) {
+		} catch (FilesNotFoundException) {
+			// Collective folder is already gone, continue with cleanup
+		} catch (InvalidPathException|FilesNotPermittedException $e) {
 			throw new NotFoundException('Failed to delete collective folder', 0, $e);
 		} finally {
 			// Delete leftovers in any case (also if collective folder is already gone)
@@ -318,6 +374,9 @@ class CollectiveService extends CollectiveServiceBase {
 			// Delete shares and user settings
 			$this->shareService->deleteShareByCollectiveId($collective->getId());
 			$this->collectiveUserSettingsMapper->deleteByCollectiveId($collective->getId());
+
+			// Delete tags
+			$this->tagMapper->deleteByCollectiveId($collective->getId());
 
 			// Delete page trash for the collective
 			$this->initPageTrashBackend();

@@ -2,22 +2,28 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2020 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Mount;
 
 use OC\Files\Cache\Scanner;
-use OC\Files\ObjectStore\NoopScanner;
 use OC\Files\ObjectStore\ObjectStoreScanner;
 use OC\Files\ObjectStore\ObjectStoreStorage;
 use OC\Files\Storage\Wrapper\Wrapper;
+use OCP\Files\Cache\ICache;
 use OCP\Files\Cache\ICacheEntry;
+use OCP\Files\Cache\IScanner;
+use OCP\Files\Storage\IConstructableStorage;
+use OCP\Files\Storage\IStorage;
 use OCP\IUser;
 
-class CollectiveStorage extends Wrapper {
-	private int $folderId;
-	private ICacheEntry $rootEntry;
-	private ?IUser $mountOwner;
-	/** @var RootEntryCache */
-	public $cache;
+class CollectiveStorage extends Wrapper implements IConstructableStorage {
+	private readonly int $folderId;
+	private readonly ?ICacheEntry $rootEntry;
+	private readonly ?IUser $mountOwner;
 
 	public function __construct($parameters) {
 		parent::__construct($parameters);
@@ -30,20 +36,11 @@ class CollectiveStorage extends Wrapper {
 		return $this->folderId;
 	}
 
-	/**
-	 * @param string $path
-	 *
-	 * @return false|string
-	 */
-	public function getOwner($path) {
-		return $this->mountOwner !== null ? $this->mountOwner->getUID() : false;
+	public function getOwner(string $path): string|false {
+		return $this->mountOwner?->getUID() ?? false;
 	}
 
-	/**
-	 * @param string $path
-	 * @param null   $storage
-	 */
-	public function getCache($path = '', $storage = null): RootEntryCache {
+	public function getCache(string $path = '', ?IStorage $storage = null): ICache {
 		if ($this->cache) {
 			return $this->cache;
 		}
@@ -51,21 +48,21 @@ class CollectiveStorage extends Wrapper {
 			$storage = $this;
 		}
 
-		$this->cache = new RootEntryCache(parent::getCache($path, $storage), $this->rootEntry);
+		$cache = parent::getCache($path, $storage);
+		if ($this->rootEntry !== null) {
+			$cache = new RootEntryCache($cache, $this->rootEntry);
+		}
+		$this->cache = $cache;
+
 		return $this->cache;
 	}
 
-	/**
-	 * @param string $path
-	 * @param null   $storage
-	 */
-	public function getScanner($path = '', $storage = null): Scanner {
+	public function getScanner(string $path = '', ?IStorage $storage = null): IScanner {
 		if (!$storage) {
 			$storage = $this;
 		}
 		if ($storage->instanceOfStorage(ObjectStoreStorage::class)) {
-			// NoopScanner is private API and kept here for compatibility with older releases
-			$storage->scanner = class_exists(NoopScanner::class) ? new NoopScanner($storage) : new ObjectStoreScanner($storage);
+			$storage->scanner = new ObjectStoreScanner($storage);
 		} elseif (!isset($storage->scanner)) {
 			$storage->scanner = new Scanner($storage);
 		}

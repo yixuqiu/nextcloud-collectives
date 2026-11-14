@@ -1,28 +1,23 @@
+<!--
+  - SPDX-FileCopyrightText: 2023 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
-	<div class="landing-page-widgets">
-		<div class="first-row-widgets">
-			<MembersWidget v-if="!isPublic" />
-			<NcButton v-if="hasContactsApp" :href="teamUrl">
-				<template #icon>
-					<TeamsIcon :size="20" />
-				</template>
-				<template v-if="!isMobile" #default>
-					{{ t('collectives','Team Overview') }}
-				</template>
-			</NcButton>
-		</div>
-		<RecentPagesWidget />
+	<div
+		class="landing-page-widgets"
+		:class="[isFullWidth ? 'full-width-view' : 'sheet-view']">
+		<MembersWidget v-if="!isPublic" />
+		<RecentPagesWidget v-if="showRecentPages" />
 	</div>
 </template>
 
 <script>
-import { mapGetters } from 'vuex'
+import { mapState } from 'pinia'
 import MembersWidget from './LandingPageWidgets/MembersWidget.vue'
 import RecentPagesWidget from './LandingPageWidgets/RecentPagesWidget.vue'
-import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
-import TeamsIcon from '../Icon/TeamsIcon.vue'
-import { generateUrl } from '@nextcloud/router'
-import isMobile from '@nextcloud/vue/dist/Mixins/isMobile.js'
+import { usePagesStore } from '../../stores/pages.js'
+import { useRootStore } from '../../stores/root.js'
 
 export default {
 	name: 'LandingPageWidgets',
@@ -30,24 +25,21 @@ export default {
 	components: {
 		MembersWidget,
 		RecentPagesWidget,
-		NcButton,
-		TeamsIcon,
 	},
 
-	mixins: [
-		isMobile,
-	],
+	props: {
+		isFullWidth: {
+			type: Boolean,
+			required: true,
+		},
+	},
 
 	computed: {
-		...mapGetters([
-			'isPublic',
-			'currentCollective',
-		]),
-		teamUrl() {
-			return generateUrl('/apps/contacts/circle/{teamId}', { teamId: this.currentCollective.circleId })
-		},
-		hasContactsApp() {
-			return 'contacts' in this.OC.appswebroots
+		...mapState(useRootStore, ['isPublic']),
+		...mapState(usePagesStore, ['pages']),
+
+		showRecentPages() {
+			return this.pages.length > 3
 		},
 	},
 }
@@ -55,13 +47,9 @@ export default {
 
 <style scoped>
 .landing-page-widgets {
-	padding-inline: 12px;
-}
-.first-row-widgets{
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	margin-top: 12px;
+	padding-inline: 14px 8px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--color-border);
 }
 
 @media print {

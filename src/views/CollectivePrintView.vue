@@ -1,3 +1,8 @@
+<!--
+  - SPDX-FileCopyrightText: 2022 Nextcloud GmbH and Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 <template>
 	<NcAppContent>
 		<CollectivePrint v-if="currentCollective" />
@@ -7,11 +12,13 @@
 </template>
 
 <script>
-
-import { mapGetters, mapMutations } from 'vuex'
-import { NcAppContent, NcEmptyContent } from '@nextcloud/vue'
-import CollectivePrint from '../components/CollectivePrint.vue'
+import { mapActions, mapState } from 'pinia'
+import NcAppContent from '@nextcloud/vue/components/NcAppContent'
+import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import CollectiveNotFound from '../components/CollectiveNotFound.vue'
+import CollectivePrint from '../components/CollectivePrint.vue'
+import { useCollectivesStore } from '../stores/collectives.js'
+import { useRootStore } from '../stores/root.js'
 
 export default {
 	name: 'CollectivePrintView',
@@ -24,18 +31,16 @@ export default {
 	},
 
 	computed: {
-		...mapGetters([
-			'currentCollective',
-			'loading',
-		]),
+		...mapState(useRootStore, ['loading']),
+		...mapState(useCollectivesStore, ['currentCollective']),
 	},
 
-	mounted() {
+	created() {
 		this.setPrintView()
 	},
 
 	methods: {
-		...mapMutations(['setPrintView']),
+		...mapActions(useRootStore, ['setPrintView']),
 	},
 }
 </script>

@@ -2,14 +2,18 @@
 
 declare(strict_types=1);
 
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 namespace OCA\Collectives\Search;
 
 use Exception;
 use OCA\Collectives\Db\Collective;
 use OCA\Collectives\Model\PageInfo;
-use OCA\Collectives\Search\FileSearch\ClauseTokenizer;
-use OCA\Collectives\Search\FileSearch\FileSearcher;
 use OCA\Collectives\Search\FileSearch\FileSearchException;
+use OCA\Collectives\Search\FileSearch\Tokenizer\WordTokenizer;
 use OCA\Collectives\Service\CollectiveHelper;
 use OCA\Collectives\Service\PageService;
 use OCA\Collectives\Service\SearchService;
@@ -24,16 +28,18 @@ use OCP\Search\ISearchQuery;
 use OCP\Search\SearchResult;
 use OCP\Search\SearchResultEntry;
 use Psr\Log\LoggerInterface;
-use TeamTNT\TNTSearch\Support\Highlighter;
 
 class PageContentProvider implements IProvider {
-	public function __construct(private IL10N $l10n,
-		private IURLGenerator $urlGenerator,
-		private CollectiveHelper $collectiveHelper,
-		private PageService $pageService,
-		private SearchService $indexedSearchService,
-		private LoggerInterface $logger,
-		private IAppManager $appManager) {
+	public function __construct(
+		private readonly IL10N $l10n,
+		private readonly IURLGenerator $urlGenerator,
+		private readonly CollectiveHelper $collectiveHelper,
+		private readonly PageService $pageService,
+		private readonly SearchService $indexedSearchService,
+		private readonly LoggerInterface $logger,
+		private readonly IAppManager $appManager,
+		private readonly WordTokenizer $tokenizer,
+	) {
 	}
 
 	public function getId(): string {
@@ -74,19 +80,21 @@ class PageContentProvider implements IProvider {
 				]);
 				continue;
 			}
-			foreach ($results as $fileId => $fileData) {
-				$fileEntries = $collectiveRoot->getById($fileId);
-				if (!empty($fileEntries)) {
-					$pages[$fileId] = $fileEntries[0];
-					$collectiveMap[$fileId] = $collective;
+
+			foreach ($results as $fileData) {
+				$fileId = $fileData['file_id'];
+				$fileEntry = $collectiveRoot->getFirstNodeById($fileId);
+				if (empty($fileEntry)) {
+					continue;
 				}
+
+				$pages[$fileId] = $fileEntry;
+				$collectiveMap[$fileId] = $collective;
 			}
 		}
 
-		$highlighter = new Highlighter((new FileSearcher())->getTokenizer());
-		$highlightLength = 50;
+		$pages = $this->indexedSearchService->rankByBigrams($query->getTerm(), $pages);
 
-		$pages = $this->rankPages($query->getTerm(), $pages);
 		$pageSearchResults = [];
 		foreach ($pages as $page) {
 			$collective = $collectiveMap[$page->getId()];
@@ -95,11 +103,21 @@ class PageContentProvider implements IProvider {
 				continue;
 			}
 
+			$descriptionSuffix = $pageInfo->getFilePathString()
+				? ' - ' . $pageInfo->getFilePathString()
+				: '';
+			$description = $this->l10n->t('In collective %1$s', [CollectiveHelper::getCollectiveNameWithEmoji($collective)])
+				. $descriptionSuffix;
+
+			$content = $page->getContent();
+			$normalizedContent = WordTokenizer::normalize($content);
+			$pos = $this->findSnippetPosition($normalizedContent, $query->getTerm());
+
 			$pageSearchResults[] = new SearchResultEntry(
 				'',
-				$highlighter->extractRelevant($query->getTerm(), $page->getContent(), $highlightLength, 5, ''),
-				$collective->getName() . ' / ' . $pageInfo->getTitle(),
-				$this->urlGenerator->linkToRouteAbsolute('collectives.start.index') . $this->pageService->getPageLink($collective->getName(), $pageInfo),
+				mb_substr($normalizedContent, $pos, 200),
+				$description,
+				$this->urlGenerator->linkToRouteAbsolute('collectives.start.index') . $this->pageService->getPageLink($collective->getUrlPath(), $pageInfo),
 				'icon-collectives-page'
 			);
 		}
@@ -110,50 +128,52 @@ class PageContentProvider implements IProvider {
 		);
 	}
 
-	/**
-	 * @param File[] $pages
-	 * @return File[]
-	 * @throws FileSearchException
-	 */
-	private function rankPages(string $term, array $pages): array {
-		if (!$this->indexedSearchService->areDependenciesMet()) {
-			return $pages;
-		}
-
-		$ranked = [];
-		$searcher = new FileSearcher();
-
-		// Run once using clause tokenizer to extract most relevant results (if term has at least two words)
-		$words = explode(' ', $term);
-		if (count($words) > 1) {
-			$config = FileSearcher::DEFAULT_CONFIG;
-			$config['tokenizer'] = ClauseTokenizer::class;
-			$searcher->loadConfig($config);
-
-			$searcher->createInMemoryIndex()->run($pages);
-			$results = $searcher->search($term);
-			foreach (array_keys($results) as $pageId) {
-				$ranked[] = $pages[$pageId];
-				unset($pages[$pageId]);
-			}
-		}
-
-		// Run using default tokenizer to rank remaining results
-		$searcher = new FileSearcher();
-		$searcher->createInMemoryIndex()->run($pages);
-		$results = $searcher->search($term, 50);
-		foreach (array_keys($results) as $pageId) {
-			$ranked[] = $pages[$pageId];
-		}
-
-		return $ranked;
-	}
-
 	private function getPageInfo(Collective $collective, File $file, string $userId): ?PageInfo {
 		try {
 			return $this->pageService->findByFile($collective->getId(), $file, $userId);
 		} catch (Exception) {
 			return null;
 		}
+	}
+
+	private function findSnippetPosition(string $content, string $query): int {
+		// try exact phrase first
+		$pos = mb_stripos($content, $query);
+		if ($pos !== false) {
+			return $pos;
+		}
+
+		// fall back to finding section with most tokens
+		$tokens = $this->tokenizer->tokenize($query);
+		$positions = [];
+		foreach ($tokens as $token) {
+			$offset = 0;
+			while (($pos = mb_stripos($content, $token, $offset)) !== false) {
+				$positions[] = $pos;
+				$offset = $pos + 1;
+			}
+		}
+
+		if (empty($positions)) {
+			return 0;
+		}
+
+		sort($positions);
+		$bestStart = $positions[0];
+		$bestScore = 0;
+
+		foreach ($positions as $startPos) {
+			$score = count(array_filter($tokens, function ($token) use ($content, $startPos) {
+				$pos = mb_stripos($content, $token, $startPos);
+				return $pos !== false && $pos <= $startPos + 200;
+			}));
+
+			if ($score > $bestScore || ($score === $bestScore && $startPos < $bestStart)) {
+				$bestScore = $score;
+				$bestStart = $startPos;
+			}
+		}
+
+		return $bestStart;
 	}
 }
